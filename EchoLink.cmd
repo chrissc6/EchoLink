@@ -19,23 +19,29 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0server-con
 echo.
 if defined notice echo %notice%
 set "notice="
-echo [1] Start
-echo [2] Stop
+echo [1] Start local only  (this computer)
+echo [2] Start shared  (this computer + local network)
+echo [3] Stop
 echo [V] Verify app (offline smoke test)
 echo [Q] Quit  (stops the server before exiting)
 echo.
 set "selection="
 set /p "selection=Choose an action, or press Enter to refresh: "
 if not defined selection goto menu
-if /i "%selection%"=="1" goto startServer
-if /i "%selection%"=="2" goto stopServer
+if /i "%selection%"=="1" goto startLocal
+if /i "%selection%"=="2" goto startShared
+if /i "%selection%"=="3" goto stopServer
 if /i "%selection%"=="V" goto verifyApp
 if /i "%selection%"=="Q" goto quitLauncher
-set "notice=Choose 1, 2, or Q."
+set "notice=Choose 1, 2, 3, V, or Q."
 goto menu
 
-:startServer
-for /f "delims=" %%R in ('powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0server-control.ps1" -Action Start') do set "notice=%%R"
+:startLocal
+for /f "delims=" %%R in ('powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0server-control.ps1" -Action Start -Mode Local') do set "notice=%%R"
+goto menu
+
+:startShared
+for /f "delims=" %%R in ('powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0server-control.ps1" -Action Start -Mode Shared') do set "notice=%%R"
 goto menu
 
 :stopServer

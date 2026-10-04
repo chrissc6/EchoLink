@@ -30,11 +30,14 @@ function check(condition, name, detail) {
   pass(name, detail);
 }
 
-function powershell(action) {
-  const result = spawnSync('powershell.exe', [
+function powershell(action, mode, skipFirewall = false) {
+  const args = [
     '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
     '-File', path.join(root, 'server-control.ps1'), '-Action', action,
-  ], { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 15000 });
+  ];
+  if (mode) args.push('-Mode', mode);
+  if (skipFirewall) args.push('-SkipFirewall');
+  const result = spawnSync('powershell.exe', args, { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30000 });
   if (result.error) throw result.error;
   return { code: result.status ?? 1, output: `${result.stdout || ''}${result.stderr || ''}`.trim() };
 }
@@ -489,6 +492,32 @@ try {
     const finalStop = powershell('Stop');
     if (finalStop.code === 0 && !(await waitForPort(500))) pass('Final cleanup releases the port', `TCP ${port} is free`);
     else results.push({ name: 'Final cleanup releases the port', ok: false, detail: finalStop.output || 'listener remains' });
+
+    const sharedStart = powershell('Start', 'Shared', true);
+    if (sharedStart.code === 0 && await waitForPort()) {
+      const sharedStatus = powershell('Status');
+      if (sharedStatus.code === 0 && sharedStatus.output.includes('Server: RUNNING (SHARED)')) pass('Shared mode binds beyond loopback', sharedStart.output.replace(/\s+/g, ' '));
+      else results.push({ name: 'Shared mode binds beyond loopback', ok: false, detail: sharedStatus.output || sharedStart.output });
+      const lanUrl = sharedStatus.output.match(/LAN:\s+(https?:\/\/\S+)/)?.[1];
+      const lanResponse = lanUrl ? await fetch(lanUrl).catch(() => null) : null;
+      if (lanResponse?.ok) pass('Shared-mode LAN address responds', `${lanUrl} returned HTTP ${lanResponse.status}`);
+      else results.push({ name: 'Shared-mode LAN address responds', ok: false, detail: lanUrl || 'no LAN IPv4 URL was reported' });
+      const sharedStop = powershell('Stop');
+      if (sharedStop.code === 0 && !(await waitForPort(500))) pass('Shared mode stop releases the port', `TCP ${port} is free`);
+      else results.push({ name: 'Shared mode stop releases the port', ok: false, detail: sharedStop.output || 'listener remains' });
+      const localRestart = powershell('Start', 'Local');
+      if (localRestart.code === 0 && await waitForPort()) {
+        const localStatus = powershell('Status');
+        if (localStatus.code === 0 && localStatus.output.includes('Server: RUNNING (LOCAL)')) pass('Local-only mode restarts after shared mode', localRestart.output.replace(/\s+/g, ' '));
+        else results.push({ name: 'Local-only mode restarts after shared mode', ok: false, detail: localStatus.output || localRestart.output });
+      } else results.push({ name: 'Local-only mode restarts after shared mode', ok: false, detail: localRestart.output || 'listener did not return' });
+      const networkFinalStop = powershell('Stop');
+      if (networkFinalStop.code === 0 && !(await waitForPort(500))) pass('Network-mode verification cleanup releases the port', `TCP ${port} is free`);
+      else results.push({ name: 'Network-mode verification cleanup releases the port', ok: false, detail: networkFinalStop.output || 'listener remains' });
+    } else {
+      results.push({ name: 'Shared mode binds beyond loopback', ok: false, detail: sharedStart.output || 'shared listener did not return' });
+      powershell('Stop');
+    }
   } else {
     results.push({ name: 'Server starts again after Stop', ok: false, detail: restarted.output || 'listener did not return' });
     powershell('Stop');

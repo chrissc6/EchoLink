@@ -7,6 +7,7 @@ const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(projectRoot, 'dist');
 const port = Number(fs.readFileSync(path.join(projectRoot, 'server.port'), 'utf8').trim());
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('server.port must contain a valid TCP port.');
+const host = process.env.ECHOLINK_HOST === '0.0.0.0' ? '0.0.0.0' : '127.0.0.1';
 const types = { '.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8', '.mjs':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8', '.json':'application/json', '.wasm':'application/wasm', '.onnx':'application/octet-stream', '.bin':'application/octet-stream', '.svg':'image/svg+xml' };
 const server = http.createServer((req,res) => {
   res.setHeader('Cross-Origin-Opener-Policy','same-origin');
@@ -26,4 +27,4 @@ const server = http.createServer((req,res) => {
     fs.createReadStream(file).pipe(res);
   });
 });
-server.listen(port,'127.0.0.1',() => console.log(`EchoLink is ready at http://127.0.0.1:${port} — press Ctrl+C to stop.`));
+server.listen(port,host,() => console.log(`EchoLink is ready at http://${host}:${port} — press Ctrl+C to stop.`));
