@@ -59,3 +59,9 @@
 .scrub-wrap input::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:0;height:0;border:0}
 .scrub-wrap input::-moz-range-thumb{width:0;height:0;border:0}
 .scrub-wrap:after{display:none}
+
+/* Playback highlighting sits behind the live text field; the editor never locks. */
+.reading-area .text-view{z-index:0;pointer-events:none;cursor:default}
+.reading-area textarea{z-index:1}
+.editor-card[data-mode="reading"] .reading-area textarea{color:transparent;caret-color:#83e8ff}
+.editor-card[data-mode="reading"] .reading-area textarea::selection{color:#fff;background:rgba(35,139,255,.55)}

@@ -308,19 +308,17 @@ async function verify() {
   await captureState(page, '09-help');
   await page.locator('.dialog-close').click();
   await page.locator('#transportPlayBtn').click();
-  await page.waitForFunction(() => !document.querySelector('#textView')?.hidden && document.querySelector('#transportPlayBtn')?.getAttribute('aria-label') === 'Pause');
-  await page.locator('#editBtn').click();
-  check(await page.locator('#textInput').isVisible() && await page.locator('#readerMode').innerText() === 'EDITOR', 'Edit mode is explicit', 'read view pauses and returns to the editor');
-  await page.locator('#transportPlayBtn').click();
-  await page.waitForFunction(() => !document.querySelector('#textView')?.hidden && document.querySelector('#transportPlayBtn')?.getAttribute('aria-label') === 'Pause');
-  check(await page.locator('#readerMode').innerText() === 'NOW READING', 'Resume restores spoken-text view', 'resuming unchanged text restores highlighting and reading mode');
+  await page.waitForFunction(() => !document.querySelector('#textView')?.hidden && !document.querySelector('#textInput')?.hidden && document.querySelector('#transportPlayBtn')?.getAttribute('aria-label') === 'Pause');
+  check(await page.locator('#textInput').isVisible() && await page.locator('.editor-label').innerText() === '▤ TEXT EDITOR' && await page.locator('#editBtn').count() === 0, 'Text editor stays editable during playback', 'highlighting remains visible underneath the active text field, with no edit-mode button');
+  await page.locator('#textInput').fill(`${shortText} Updated.`);
+  check(await page.locator('#textInput').isVisible() && await page.locator('#textInput').inputValue() === `${shortText} Updated.` && await page.locator('#transportPlayBtn').getAttribute('aria-label') === 'Play', 'Editing text during playback returns to the editable draft', 'changing the text safely stops speech for the previous draft');
+  await page.locator('#textInput').fill(shortText);
   check(blockedExternal.size === 0, 'No internet requests during offline initialization and synthesis', 'all browser requests were restricted to the loopback origin');
 
   await page.locator('#stopBtn').click();
   await chooseMenuOption(page, 'voiceSelect', 'af_jessica');
   check((await page.locator('#sideVoice').innerText()).includes('Jessica'), 'Voice selection updates the reader', 'Jessica is shown as the active voice');
   await captureState(page, '10-alternate-voice');
-  await page.locator('#editBtn').click();
   await page.locator('#textInput').fill('Jessica is speaking a local voice selection check.');
   await page.locator('#transportPlayBtn').click();
   await waitFor(page, () => window.__echolinkVerify.audio.some((item) => item.voice === 'af_jessica'), 'Alternate voice synthesizes offline', 180000);
@@ -332,7 +330,6 @@ async function verify() {
   const longText = paragraphs.join('\n\n');
   await page.locator('#stopBtn').click();
   await chooseMenuOption(page, 'voiceSelect', 'af_heart');
-  await page.locator('#editBtn').click();
   await page.locator('#textInput').fill(longText);
   await page.locator('#transportPlayBtn').click();
   await waitFor(page, () => document.querySelectorAll('#textView .speech-chunk').length >= 8, 'Long text is split into navigable chunks', 10000);
@@ -424,7 +421,6 @@ async function verify() {
   check(!(await page.locator('#muteBtn').getAttribute('class')).includes('muted'), 'Unmute works', 'volume is restored');
   await page.locator('#stopBtn').click();
   check((await page.locator('#chunkCount').innerText()).trim() === '0 / 0' && (await playButton.getAttribute('aria-label')) === 'Play', 'Stop works', 'generated session cleared and playback stopped');
-  await page.locator('#editBtn').click();
   await page.locator('#clearBtn').click();
   const clearedState = await page.evaluate(() => ({
     text: document.querySelector('#textInput')?.value,

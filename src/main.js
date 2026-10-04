@@ -2,7 +2,7 @@ import { KokoroReaderSession } from './tts.js';
 import './style.css';
 
 const $ = (id) => document.getElementById(id);
-const ui = Object.fromEntries(['textInput','placeholder','textView','textCount','pasteBtn','editBtn','clearBtn','editorCard','readerMode','transportPlayBtn','restartBtn','stopBtn','previousBtn','nextBtn','backBtn','forwardBtn','rateSelect','volumeSlider','muteBtn','scrubber','scrubProgress','elapsedTime','totalTime','statusText','statusLed','generationText','chunkCount','generationProgress','bufferStatus','deviceStatus','engineVoice','trackTitle','trackSubtitle','trackWave','toast','helpBtn','historyBtn','settingsBtn','appDialog','dialogTitle','dialogContent','downloadBtn','sideVoice','voiceSelect','voiceAvatar','voiceMeta'].map((id) => [id, $(id)]));
+const ui = Object.fromEntries(['textInput','placeholder','textView','textCount','pasteBtn','clearBtn','editorCard','transportPlayBtn','restartBtn','stopBtn','previousBtn','nextBtn','backBtn','forwardBtn','rateSelect','volumeSlider','muteBtn','scrubber','scrubProgress','elapsedTime','totalTime','statusText','statusLed','generationText','chunkCount','generationProgress','bufferStatus','deviceStatus','engineVoice','trackTitle','trackSubtitle','trackWave','toast','helpBtn','historyBtn','settingsBtn','appDialog','dialogTitle','dialogContent','downloadBtn','sideVoice','voiceSelect','voiceAvatar','voiceMeta'].map((id) => [id, $(id)]));
 const rates = [0.75,0.9,1,1.1,1.25,1.5,1.75,2];
 const voices = [
   { id: 'af_heart', name: 'Heart', accent: 'AMERICAN · WARM' },
@@ -213,8 +213,8 @@ function renderText() {
   ui.textInput.classList.toggle('has-text', !!text.trim());
   writeLocal(textKey, text);
   if (text !== preparedText) {
-    ui.editorCard.dataset.mode = 'edit'; ui.readerMode.textContent = 'EDITOR'; ui.editBtn.hidden = true;
-    ui.textView.hidden = true; ui.textInput.hidden = false; ui.textView.replaceChildren(); viewSpans = []; lastHighlight = -1;
+    ui.editorCard.dataset.mode = 'edit';
+    ui.textView.hidden = true; ui.textView.replaceChildren(); viewSpans = []; lastHighlight = -1;
     if (session.chunks.length) { preparedText = ''; session.stop(); }
   }
   renderTrack();
@@ -226,13 +226,9 @@ ui.pasteBtn.addEventListener('click', async () => {
 });
 ui.clearBtn.addEventListener('click', () => {
   ui.textInput.value = ''; preparedText = ''; viewSpans = []; lastHighlight = -1;
-  ui.editorCard.dataset.mode = 'edit'; ui.readerMode.textContent = 'EDITOR'; ui.editBtn.hidden = true;
-  ui.textView.replaceChildren(); ui.textView.hidden = true; ui.textInput.hidden = false;
+  ui.editorCard.dataset.mode = 'edit';
+  ui.textView.replaceChildren(); ui.textView.hidden = true;
   session.stop(); renderText(); renderTrack(); ui.textInput.focus();
-});
-ui.editBtn.addEventListener('click', () => {
-  session.pause(); ui.editorCard.dataset.mode = 'edit'; ui.readerMode.textContent = 'EDITOR';
-  ui.editBtn.hidden = true; ui.textView.hidden = true; ui.textInput.hidden = false; ui.textInput.focus();
 });
 function openPanel(title, markup) {
   ui.dialogTitle.textContent = title;
@@ -253,7 +249,7 @@ ui.historyBtn.addEventListener('click', () => {
   ui.dialogContent.querySelectorAll('[data-history-index]').forEach((button) => button.addEventListener('click', () => {
     const item = history[Number(button.dataset.historyIndex)];
     if (!item) return;
-    session.stop(); preparedText = ''; ui.textView.replaceChildren(); ui.textView.hidden = true; ui.textInput.hidden = false;
+    session.stop(); preparedText = ''; ui.textView.replaceChildren(); ui.textView.hidden = true;
     ui.textInput.value = item.text; ui.voiceSelect.value = voices.some((voice) => voice.id === item.voice) ? item.voice : 'af_heart';
     session.voice = ui.voiceSelect.value; renderVoice(); renderText(); savePreferences(); ui.appDialog.close();
   }));
@@ -295,19 +291,18 @@ function showReadView(text, chunks) {
     ui.textView.append(span); viewSpans.push(span); offset = chunk.sourceEnd;
   }
   if (offset < text.length) ui.textView.append(document.createTextNode(text.slice(offset)));
-  ui.editorCard.dataset.mode = 'reading'; ui.readerMode.textContent = 'NOW READING'; ui.editBtn.hidden = false;
-  ui.textView.hidden = false; ui.textInput.hidden = true;
+  ui.editorCard.dataset.mode = 'reading';
+  ui.textView.hidden = false;
 }
 
 async function startOrResume() {
   if (ui.textInput.value.trim() && (!session.chunks.length || ui.textInput.value !== preparedText)) {
     preparedText = ui.textInput.value;
     session.prepare(preparedText);
-    showReadView(preparedText, session.chunks);
     rememberReading(preparedText);
   }
   if (!session.chunks.length) { ui.textInput.focus(); notify('Paste or type something to read first.'); return; }
-  if (!ui.textInput.hidden) showReadView(preparedText, session.chunks);
+  showReadView(preparedText, session.chunks);
   try { await session.play(); }
   catch (error) { notify(`Audio playback could not start: ${error?.message || error}`); }
 }
@@ -362,10 +357,8 @@ ui.scrubber.addEventListener('change', () => {
   session.seek(session.duration * Number(ui.scrubber.value) / 1000); scrubbing = false;
   if (session.playing && session.buffering) notify('Preparing your place…');
 });
-ui.textView.addEventListener('click', (event) => {
-  const span = event.target.closest('.speech-chunk'); if (!span) return;
-  const target = session.chunks[Number(span.dataset.index)];
-  if (target) { session.seek(target.start); if (!session.playing) session.play(); }
+ui.textInput.addEventListener('scroll', () => {
+  if (!ui.textView.hidden) ui.textView.scrollTop = ui.textInput.scrollTop;
 });
 document.addEventListener('keydown', (event) => {
   const typing = event.target === ui.textInput || ['INPUT','TEXTAREA','SELECT'].includes(event.target?.tagName) || event.target?.isContentEditable;
@@ -423,7 +416,11 @@ function update(state = {}) {
     viewSpans[lastHighlight]?.classList.remove('active');
     viewSpans[active].classList.add('active'); lastHighlight = active;
     const rect = viewSpans[active].getBoundingClientRect();
-    if (rect.top < 110 || rect.bottom > innerHeight - 185) viewSpans[active].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    const area = ui.textInput.getBoundingClientRect();
+    if (rect.top < area.top || rect.bottom > area.bottom) {
+      ui.textInput.scrollTop += rect.top < area.top ? rect.top - area.top : rect.bottom - area.bottom;
+      ui.textView.scrollTop = ui.textInput.scrollTop;
+    }
   }
 }
 setInterval(() => { if (session.playing) update({ position: session.currentPosition(), duration: session.duration, playing: true, chunks: session.chunks, generated: session.generated, total: session.chunks.length, cursor: session.cursor }); }, 120);
