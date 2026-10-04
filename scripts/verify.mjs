@@ -203,6 +203,10 @@ async function verify() {
 
   await page.goto(`${origin}/`, { waitUntil: 'domcontentloaded', timeout: 30000 });
   check((await page.title()).includes('EchoLink'), 'Application page renders', await page.title());
+  const favicon = await page.locator('link[rel="icon"]').getAttribute('href');
+  const faviconUrl = new URL(favicon, origin);
+  const faviconResponse = await fetch(faviconUrl);
+  check(faviconUrl.pathname === '/favicon.svg' && faviconResponse.ok && (faviconResponse.headers.get('content-type') || '').includes('image/svg+xml'), 'EchoLink waveform favicon is served locally', `${faviconUrl.pathname} returned HTTP ${faviconResponse.status}`);
   check((await page.locator('.brand').getAttribute('aria-label')) === 'EchoLink home' && /echolink/i.test(await page.locator('.brand').innerText()), 'EchoLink branding renders', 'logo and accessible name use the new app name');
   const initialVoices = await page.locator('#voiceSelect option').evaluateAll((items) => items.map((item) => item.value));
   check(JSON.stringify(initialVoices) === JSON.stringify(voiceIds), 'Requested voice list renders', `${initialVoices.length} unique options in the requested order`);

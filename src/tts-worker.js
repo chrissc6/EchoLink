@@ -24,6 +24,11 @@ async function initializeEngine() {
   transformersEnv.allowRemoteModels = false;
   transformersEnv.useBrowserCache = false;
   transformersEnv.localModelPath = new URL('/models/', self.location.href).href;
+  // Transformers defaults this to high-performance. Chromium currently warns that
+  // Windows ignores the hint; omitting it leaves adapter selection to the browser.
+  if (transformersEnv.backends?.onnx?.webgpu) {
+    transformersEnv.backends.onnx.webgpu.powerPreference = undefined;
+  }
   kokoroEnv.wasmPaths = new URL('/tts/runtime/', self.location.href).href;
   send('status', { status: 'loading', message: `Loading Kokoro ${selectedVoice} · FP32 WebGPU` });
   const voiceUrl = new URL(`/tts/voices/${selectedVoice}.bin`, self.location.href);
