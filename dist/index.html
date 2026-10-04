@@ -7,13 +7,13 @@
     <meta name="description" content="A private, offline Kokoro voice reader." />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect x='2' y='2' width='36' height='36' rx='12' fill='%2315161e' stroke='%23d6a58b'/%3E%3Ctext x='20' y='28' text-anchor='middle' font-family='Georgia' font-size='27' fill='%23e5bba1'%3Ee%3C/text%3E%3C/svg%3E" />
     <title>EchoLink — Kokoro Reader</title>
-    <script type="module" crossorigin src="./assets/index-BxL5i5_U.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-FOZDYgvj.css">
+    <script type="module" crossorigin src="./assets/index-LXInecv6.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-CPYo7uun.css">
   </head>
   <body>
     <div class="app-shell">
       <header class="topbar">
-        <a class="brand" href="#" aria-label="EchoLink home"><span class="brand-mark">e</span><span>echolink<span class="brand-dot">.</span></span></a>
+        <a class="brand" href="#" aria-label="EchoLink home"><span class="brand-mark"><img src="./images/echolink-copper-logo.png" alt="" /></span><span>echolink<span class="brand-dot">.</span></span></a>
         <div class="privacy-pill"><span class="privacy-dot"></span> PRIVATE BY DESIGN <span class="privacy-divider"></span> RUNS ON THIS DEVICE</div>
         <button class="icon-button help-button" id="helpBtn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">?</button>
       </header>
@@ -32,14 +32,14 @@
         </section>
         <aside class="side-panel">
           <div class="side-heading">NOW PLAYING <span class="live-indicator"><i></i> LOCAL</span></div>
-          <div class="track-card"><div class="artwork"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-center">e</div><div class="art-star star-one">✳</div><div class="art-star star-two">✦</div></div><div class="track-info"><div class="track-title" id="trackTitle">A moment for you</div><div class="track-subtitle" id="trackSubtitle">Paste text to begin</div></div><div class="track-wave" id="trackWave"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div></div>
+          <div class="track-card"><div class="artwork"><img class="mountain-art" src="./images/twilight-mountain-valley.png" alt="" /><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-center"><img src="./images/echolink-copper-logo.png" alt="" /></div><div class="art-star star-one">✳</div><div class="art-star star-two">✦</div></div><div class="track-info"><div class="track-title" id="trackTitle">A moment for you</div><div class="track-subtitle" id="trackSubtitle">Paste text to begin</div></div><div class="track-wave" id="trackWave"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div></div>
           <div class="status-card"><div class="status-top"><span class="status-led" id="statusLed"></span><span id="statusText">Ready when you are</span><button class="status-info" title="Speech is generated locally using Kokoro 82M in FP32 on WebGPU.">i</button></div><div class="status-rule"></div><div class="tech-grid"><div><span>ENGINE</span><b>KOKORO 82M</b></div><div><span>VOICE</span><b>HEART · AF</b></div><div><span>DEVICE</span><b id="deviceStatus">WEBGPU</b></div><div><span>BUFFERED</span><b id="bufferStatus">—</b></div></div><div class="generation-row"><div><span id="generationText">MODEL NOT LOADED</span><span id="chunkCount">0 / 0</span></div><div class="progress-track"><i id="generationProgress"></i></div></div></div>
           <div class="side-note"><span class="note-icon">✧</span><div><b>A little room to think.</b><span>Take your time. Your place is saved automatically.</span></div></div>
           <div class="keyboard-note"><span class="keycap">Space</span><span>Play or pause</span><span class="keycap">←</span><span>Back 15 sec</span></div>
         </aside>
       </main>
       <footer class="player" aria-label="Audio player controls">
-        <div class="player-track"><div class="mini-art">e</div><div class="player-track-copy"><b id="playerTrackTitle">Ready to listen</b><span id="playerTrackMeta">Kokoro · Heart</span></div><button class="player-heart" aria-label="Heart voice">♡</button></div>
+        <div class="player-track"><div class="mini-art"><img src="./images/echolink-copper-logo.png" alt="" /></div><div class="player-track-copy"><b id="playerTrackTitle">Ready to listen</b><span id="playerTrackMeta">Kokoro · Heart</span></div><button class="player-heart" aria-label="Heart voice">♡</button></div>
         <div class="transport"><div class="transport-buttons"><button class="transport-button" id="restartBtn" title="Restart from the beginning">↺</button><button class="transport-button" id="previousBtn" title="Previous chunk">|‹</button><button class="transport-button skip-button" id="backBtn" title="Back 15 seconds"><span>↶</span><small>15</small></button><button class="transport-play" id="transportPlayBtn" aria-label="Play"><span>▶</span></button><button class="transport-button skip-button" id="forwardBtn" title="Forward 15 seconds"><span>↷</span><small>15</small></button><button class="transport-button" id="nextBtn" title="Next chunk">›|</button><button class="transport-button stop-button" id="stopBtn" title="Stop playback">■</button></div><div class="timeline"><span id="elapsedTime">0:00</span><div class="scrub-wrap"><input id="scrubber" type="range" min="0" max="1000" value="0" aria-label="Seek through document" /><div class="scrub-progress" id="scrubProgress"></div></div><span id="totalTime">0:00</span></div></div>
         <div class="player-options"><button class="rate-button" id="rateBtn">1.0<span>x</span></button><div class="volume-group"><button class="volume-button" id="muteBtn" aria-label="Mute">◖))</button><input id="volumeSlider" type="range" min="0" max="100" value="82" aria-label="Volume" /></div><button class="queue-button" title="Playback settings">☷</button></div>
       </footer>

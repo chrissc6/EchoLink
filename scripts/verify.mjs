@@ -87,6 +87,8 @@ async function verify() {
     ['server-control.ps1', 1000],
     ['vendor/kokoro.js', 10000],
     ['dist/index.html', 1000],
+    ['dist/images/echolink-copper-logo.png', 100000],
+    ['dist/images/twilight-mountain-valley.png', 100000],
     ...voiceIds.map((voiceId) => [`dist/tts/voices/${voiceId}.bin`, 500000]),
     ['dist/tts/runtime/ort-wasm-simd-threaded.jsep.wasm', 1000000],
     ['dist/tts/runtime/ort-wasm-simd-threaded.jsep.mjs', 10000],
@@ -193,6 +195,9 @@ async function verify() {
   const initialVoices = await page.locator('#voiceSelect option').evaluateAll((items) => items.map((item) => item.value));
   check(JSON.stringify(initialVoices) === JSON.stringify(voiceIds), 'Requested voice list renders', `${initialVoices.length} unique options in the requested order`);
   check(await page.locator('#voiceSelect').inputValue() === 'af_heart' && (await page.locator('#playerTrackMeta').innerText()).includes('Heart'), 'Heart remains the default voice', 'af_heart is selected on a fresh profile');
+  await page.waitForFunction(() => [...document.querySelectorAll('.brand-mark img, .artwork .mountain-art, .art-center img, .mini-art img')].every((image) => image.complete));
+  const visualAssets = await page.locator('.brand-mark img, .artwork .mountain-art, .art-center img, .mini-art img').evaluateAll((images) => images.map(({ currentSrc, naturalWidth }) => ({ path: new URL(currentSrc).pathname, naturalWidth })));
+  check(visualAssets.length === 4 && visualAssets.every(({ naturalWidth }) => naturalWidth > 0), 'Local logo and mountain artwork render', visualAssets.map(({ path, naturalWidth }) => `${path} (${naturalWidth}px)`).join(', '));
   await waitFor(page, () => window.__echolinkVerify.messages.some((m) => m.type === 'status' && m.status === 'ready'), 'Kokoro initializes from local assets');
   const requiredLocalRequests = [
     '/tts/voices/af_heart.bin',

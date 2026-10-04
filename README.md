@@ -25,6 +25,10 @@ WebGPU is the required primary backend. Use a current Chrome or Edge build with 
 - The production local server applies a Content Security Policy with `connect-src 'self'`, so a remote request cannot silently become a runtime dependency.
 - Text and preferences are stored in the browser's local storage.
 
+## Visual assets
+
+The local header and player use the supplied copper EchoLink logo and twilight mountain artwork from `public/images/`. The supplied futuristic-reader image is kept in `design-reference/` as a visual guide; it is not loaded by the app. These are served from the local EchoLink server, so they do not add external image requests.
+
 ## Rebuild
 
 With dependencies installed, run `npm run build`. Then start with `EchoLink.cmd` or `node server.mjs`. Runtime use of the built `dist/` folder requires Node.js but no npm packages and no network.
