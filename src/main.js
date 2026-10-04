@@ -31,7 +31,11 @@ const session = new KokoroReaderSession(worker, audioContext, update);
 for (const voice of voices) {
   const option = document.createElement('option');
   option.value = voice.id;
-  option.textContent = `${voice.name} (${voice.id})`;
+  const info = voiceInfo(voice);
+  option.textContent = `${voice.name} ${info.display}`;
+  option.dataset.name = voice.name;
+  option.dataset.meta = info.display;
+  option.dataset.accessible = info.accessible;
   ui.voiceSelect.append(option);
 }
 const savedVoice = voices.find(({ id }) => id === saved.voice) || voices[0];
@@ -42,10 +46,138 @@ renderVoice();
 ui.textInput.value = readLocal(textKey) || readLocal('hush-last-text') || '';
 session.rate = rates.includes(Number(saved.rate)) ? Number(saved.rate) : 1;
 session.volume = saved.volume == null ? 0.82 : Math.max(0, Math.min(1, Number(saved.volume)));
+ui.rateSelect.value = String(session.rate);
 let lastVolume = Number(saved.lastVolume) || (session.volume > 0 ? session.volume : 0.82);
 ui.volumeSlider.value = Math.round(session.volume * 100);
+enhanceSelect(ui.voiceSelect);
+enhanceSelect(ui.rateSelect);
 renderText();
 worker.postMessage({ type: 'initialize', voice: session.voice });
+
+function voiceInfo(voice) {
+  const country = voice.id.startsWith('a') ? 'United States' : 'United Kingdom';
+  const gender = voice.id[1] === 'f' ? 'Female' : 'Male';
+  const flag = voice.id.startsWith('a') ? '🇺🇸' : '🇬🇧';
+  const symbol = voice.id[1] === 'f' ? '♀' : '♂';
+  return { country, gender, display: `${flag} ${symbol}`, accessible: `${voice.name}, ${country}, ${gender}` };
+}
+
+function enhanceSelect(select) {
+  if (!select || select.dataset.enhanced) return;
+  select.dataset.enhanced = 'true';
+  const wrapper = document.createElement('div');
+  wrapper.className = `custom-select-wrap ${select.id === 'rateSelect' ? 'speed-menu-wrap' : ''}`;
+  select.before(wrapper);
+  wrapper.append(select);
+  select.classList.add('custom-select-source');
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.id = `${select.id}MenuButton`;
+  trigger.className = 'custom-select-trigger';
+  trigger.setAttribute('role', 'combobox');
+  trigger.setAttribute('aria-haspopup', 'listbox');
+  trigger.setAttribute('aria-expanded', 'false');
+  trigger.setAttribute('aria-controls', `${select.id}MenuList`);
+  const label = select.getAttribute('aria-label') || select.closest('label')?.childNodes[0]?.textContent?.trim() || 'Choose an option';
+  const menu = document.createElement('div');
+  menu.id = `${select.id}MenuList`;
+  menu.className = 'custom-select-menu';
+  menu.setAttribute('role', 'listbox');
+  menu.hidden = true;
+  wrapper.append(trigger, menu);
+
+  const labelFor = (option) => option.dataset.accessible || option.dataset.display || option.textContent.trim();
+  function renderOptions() {
+    menu.replaceChildren();
+    [...select.options].forEach((option) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'custom-select-option';
+      item.setAttribute('role', 'option');
+      item.setAttribute('aria-label', labelFor(option));
+      item.setAttribute('aria-selected', String(option.value === select.value));
+      item.dataset.value = option.value;
+      const name = document.createElement('span');
+      name.className = 'custom-option-name';
+      name.textContent = option.dataset.name || option.dataset.display || option.textContent.trim();
+      item.append(name);
+      if (option.dataset.meta) {
+        const meta = document.createElement('span');
+        meta.className = 'custom-option-meta';
+        meta.textContent = option.dataset.meta;
+        item.append(meta);
+      }
+      item.addEventListener('click', () => {
+        select.value = option.value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        closeMenu();
+        trigger.focus();
+      });
+      menu.append(item);
+    });
+  }
+  function syncValue() {
+    const option = select.selectedOptions[0];
+    if (!option) return;
+    trigger.setAttribute('aria-label', `${label}: ${labelFor(option)}`);
+    trigger.replaceChildren();
+    const value = document.createElement('span');
+    value.className = 'custom-select-value';
+    const name = document.createElement('span');
+    name.textContent = option.dataset.name || option.dataset.display || option.textContent.trim();
+    value.append(name);
+    if (option.dataset.meta) {
+      const meta = document.createElement('span');
+      meta.className = 'custom-option-meta';
+      meta.textContent = option.dataset.meta;
+      value.append(meta);
+    }
+    const caret = document.createElement('span');
+    caret.className = 'custom-select-caret';
+    caret.setAttribute('aria-hidden', 'true');
+    trigger.append(value, caret);
+    menu.querySelectorAll('[role="option"]').forEach((item) => item.setAttribute('aria-selected', String(item.dataset.value === select.value)));
+  }
+  function openMenu() {
+    document.querySelectorAll('.custom-select-menu:not([hidden])').forEach((other) => {
+      if (other === menu) return;
+      other.hidden = true;
+      document.getElementById(other.id.replace('MenuList', 'MenuButton'))?.setAttribute('aria-expanded', 'false');
+    });
+    renderOptions();
+    menu.hidden = false;
+    trigger.setAttribute('aria-expanded', 'true');
+    menu.querySelector(`[data-value="${CSS.escape(select.value)}"]`)?.focus();
+  }
+  function closeMenu() {
+    menu.hidden = true;
+    trigger.setAttribute('aria-expanded', 'false');
+  }
+  trigger.addEventListener('click', () => menu.hidden ? openMenu() : closeMenu());
+  trigger.addEventListener('keydown', (event) => {
+    if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) { event.preventDefault(); openMenu(); }
+  });
+  menu.addEventListener('keydown', (event) => {
+    const options = [...menu.querySelectorAll('[role="option"]')];
+    const index = options.indexOf(document.activeElement);
+    if (event.key === 'Escape') { event.preventDefault(); closeMenu(); trigger.focus(); }
+    else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); options[Math.max(0, Math.min(options.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)))]?.focus(); }
+    else if (event.key === 'Home') { event.preventDefault(); options[0]?.focus(); }
+    else if (event.key === 'End') { event.preventDefault(); options.at(-1)?.focus(); }
+  });
+  select.addEventListener('change', syncValue);
+  syncValue();
+  renderOptions();
+}
+
+document.addEventListener('pointerdown', (event) => {
+  document.querySelectorAll('.custom-select-wrap').forEach((wrapper) => {
+    if (wrapper.contains(event.target)) return;
+    const menu = wrapper.querySelector('.custom-select-menu');
+    if (menu) menu.hidden = true;
+    wrapper.querySelector('.custom-select-trigger')?.setAttribute('aria-expanded', 'false');
+  });
+});
 
 function wordCount(text) { return text.trim() ? text.trim().split(/\s+/).length : 0; }
 function formatTime(seconds) {
@@ -127,7 +259,9 @@ ui.historyBtn.addEventListener('click', () => {
   }));
 });
 ui.settingsBtn.addEventListener('click', () => {
-  openPanel('Settings', `<div class="settings-form"><label>Default voice<select id="settingsVoice">${voices.map((voice) => `<option value="${voice.id}" ${voice.id === session.voice ? 'selected' : ''}>${voice.name} (${voice.id})</option>`).join('')}</select></label><label>Playback speed <select id="settingsRate">${rates.map((rate) => `<option value="${rate}" ${rate === session.rate ? 'selected' : ''}>${rate}×</option>`).join('')}</select></label><label>Volume <input id="settingsVolume" type="range" min="0" max="100" value="${Math.round(session.volume * 100)}" /></label><p class="dialog-copy">Preferences are saved locally in this browser.</p></div>`);
+  openPanel('Settings', `<div class="settings-form"><label>Default voice<select id="settingsVoice">${voices.map((voice) => { const info = voiceInfo(voice); return `<option value="${voice.id}" data-name="${voice.name}" data-meta="${info.display}" data-accessible="${info.accessible}" ${voice.id === session.voice ? 'selected' : ''}>${voice.name} ${info.display}</option>`; }).join('')}</select></label><label>Playback speed <select id="settingsRate">${rates.map((rate) => `<option value="${rate}" ${rate === session.rate ? 'selected' : ''}>${rate}×</option>`).join('')}</select></label><label>Volume <input id="settingsVolume" type="range" min="0" max="100" value="${Math.round(session.volume * 100)}" /></label><p class="dialog-copy">Preferences are saved locally in this browser.</p></div>`);
+  enhanceSelect($('settingsVoice'));
+  enhanceSelect($('settingsRate'));
   $('settingsVoice').addEventListener('change', (event) => { ui.voiceSelect.value = event.target.value; ui.voiceSelect.dispatchEvent(new Event('change')); });
   $('settingsRate').addEventListener('change', (event) => { ui.rateSelect.value = event.target.value; ui.rateSelect.dispatchEvent(new Event('change')); });
   $('settingsVolume').addEventListener('input', (event) => { ui.volumeSlider.value = event.target.value; ui.volumeSlider.dispatchEvent(new Event('input')); });
@@ -276,7 +410,9 @@ function update(state = {}) {
   ui.muteBtn.classList.toggle('muted', session.volume === 0);
   ui.transportPlayBtn.classList.toggle('is-playing', state.playing);
   ui.transportPlayBtn.setAttribute('aria-label', state.playing ? 'Pause' : 'Play');
-  ui.transportPlayBtn.firstElementChild.textContent = state.playing ? 'Ⅱ' : '▶';
+  ui.transportPlayBtn.firstElementChild.innerHTML = state.playing
+    ? '<svg viewBox="0 0 24 24"><path d="M7 5h4v14H7zM15 5h4v14h-4z"/></svg>'
+    : '<svg viewBox="0 0 24 24"><path d="m8 5 12 7-12 7V5Z"/></svg>';
   ui.trackWave.classList.toggle('active', !!state.playing);
   ui.downloadBtn.disabled = !session.chunks.length || session.generated !== session.chunks.length || session.chunks.some((chunk) => !chunk.buffer);
   if (preparedText) renderTrack();

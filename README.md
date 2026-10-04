@@ -27,7 +27,7 @@ WebGPU is the required primary backend. Use a current Chrome or Edge build with 
 
 ## Visual assets
 
-The header uses a cyan waveform identity mark. The app background uses the supplied space/mountain artwork in `public/images/`; the now-playing card uses the twilight mountain image. The supplied interface image is retained in `design-reference/` as a visual guide. All image files are local. The available History, Settings, and Help panels are local to the browser; Download Audio exports the completed speech as a mono 24 kHz WAV. Export becomes available once all chunks for the current text and voice have finished generating.
+The header uses a cyan waveform identity mark. Voice and speed pickers use themed, keyboard-accessible menus; voice labels show the name plus country and gender cues. The app background uses the supplied space/mountain artwork in `public/images/`; the now-playing card uses the twilight mountain image. The supplied interface image is retained in `design-reference/` as a visual guide. All image files are local. The available History, Settings, and Help panels are local to the browser; Download Audio exports the completed speech as a mono 24 kHz WAV. Export becomes available once all chunks for the current text and voice have finished generating.
 
 ## Rebuild
 

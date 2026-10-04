@@ -80,6 +80,11 @@ async function captureState(page, name) {
   await page.screenshot({ path: path.join(screenshotDir, `${name}.png`), animations: 'disabled' });
 }
 
+async function chooseMenuOption(page, selectId, value) {
+  await page.locator(`#${selectId}MenuButton`).click();
+  await page.locator(`#${selectId}MenuList [role="option"][data-value="${value}"]`).click();
+}
+
 async function verify() {
   const build = spawnSync(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'build'], {
     cwd: root, encoding: 'utf8', windowsHide: true, timeout: 180000,
@@ -202,6 +207,19 @@ async function verify() {
   const initialVoices = await page.locator('#voiceSelect option').evaluateAll((items) => items.map((item) => item.value));
   check(JSON.stringify(initialVoices) === JSON.stringify(voiceIds), 'Requested voice list renders', `${initialVoices.length} unique options in the requested order`);
   check(await page.locator('#voiceSelect').inputValue() === 'af_heart' && (await page.locator('#sideVoice').innerText()).includes('Heart'), 'Heart remains the default voice', 'af_heart is selected on a fresh profile');
+  check((await page.locator('#voiceSelect option').first().innerText()).includes('🇺🇸') && !(await page.locator('#voiceSelect option').first().innerText()).includes('('), 'Voice labels use compact country and gender cues', await page.locator('#voiceSelect option').first().innerText());
+  await page.locator('#voiceSelectMenuButton').click();
+  check(await page.locator('#voiceSelectMenuList').isVisible() && await page.locator('#voiceSelectMenuList [role="option"]').count() === 11, 'Themed voice menu opens with every voice', 'custom glass listbox replaces the browser dropdown');
+  await captureState(page, '11-voice-menu');
+  await page.keyboard.press('Escape');
+  await page.locator('#rateSelectMenuButton').click();
+  check(await page.locator('#rateSelectMenuList').isVisible() && await page.locator('#rateSelectMenuList [role="option"]').count() === 8, 'Themed playback speed menu opens', 'speed choices use the same glass menu treatment');
+  await captureState(page, '12-speed-menu');
+  await page.keyboard.press('Escape');
+  await page.locator('#rateSelectMenuButton').focus();
+  await page.keyboard.press('ArrowDown');
+  check(await page.locator('#rateSelectMenuButton').getAttribute('aria-expanded') === 'true', 'Dropdowns support keyboard opening', 'Arrow Down opens the focused speed menu');
+  await page.keyboard.press('Escape');
   await page.waitForFunction(() => [...document.querySelectorAll('.artwork .mountain-art')].every((image) => image.complete));
   const visualAssets = await page.locator('.artwork .mountain-art').evaluateAll((images) => images.map(({ currentSrc, naturalWidth }) => ({ path: new URL(currentSrc).pathname, naturalWidth })));
   check(visualAssets.length === 1 && visualAssets.every(({ naturalWidth }) => naturalWidth > 0), 'Local mountain artwork renders', visualAssets.map(({ path, naturalWidth }) => `${path} (${naturalWidth}px)`).join(', '));
@@ -258,12 +276,16 @@ async function verify() {
   await page.locator('#settingsBtn').click();
   check((await page.locator('#dialogTitle').innerText()) === 'Settings' && await page.locator('#settingsVoice').inputValue() === 'af_heart', 'Settings reflect persistent defaults', 'Heart and current speed/volume are shown');
   await captureState(page, '08-settings');
-  await page.locator('#settingsVoice').selectOption('af_sky');
-  await page.locator('#settingsRate').selectOption('1.25');
+  await page.locator('#settingsVoiceMenuButton').click();
+  check(await page.locator('#settingsVoiceMenuList').isVisible(), 'Settings voice menu uses the themed selector', 'the persistent preference uses the same custom control');
+  await captureState(page, '13-settings-voice-menu');
+  await page.keyboard.press('Escape');
+  await chooseMenuOption(page, 'settingsVoice', 'af_sky');
+  await chooseMenuOption(page, 'settingsRate', '1.25');
   await page.locator('#settingsVolume').evaluate((el) => { el.value = '66'; el.dispatchEvent(new Event('input', { bubbles: true })); });
   check(await page.locator('#voiceSelect').inputValue() === 'af_sky' && await page.locator('#rateSelect').inputValue() === '1.25' && await page.locator('#volumeSlider').inputValue() === '66', 'Settings update persistent reader preferences', 'voice, speed, and volume apply to the reader');
-  await page.locator('#settingsVoice').selectOption('af_heart');
-  await page.locator('#settingsRate').selectOption('1');
+  await chooseMenuOption(page, 'settingsVoice', 'af_heart');
+  await chooseMenuOption(page, 'settingsRate', '1');
   await page.locator('#settingsVolume').evaluate((el) => { el.value = '82'; el.dispatchEvent(new Event('input', { bubbles: true })); });
   await page.locator('.dialog-close').click();
   await page.locator('#helpBtn').click();
@@ -280,7 +302,7 @@ async function verify() {
   check(blockedExternal.size === 0, 'No internet requests during offline initialization and synthesis', 'all browser requests were restricted to the loopback origin');
 
   await page.locator('#stopBtn').click();
-  await page.locator('#voiceSelect').selectOption('af_jessica');
+  await chooseMenuOption(page, 'voiceSelect', 'af_jessica');
   check((await page.locator('#sideVoice').innerText()).includes('Jessica'), 'Voice selection updates the reader', 'Jessica is shown as the active voice');
   await captureState(page, '10-alternate-voice');
   await page.locator('#editBtn').click();
@@ -294,7 +316,7 @@ async function verify() {
     `Section ${index + 1}. This progressive playback check keeps the interface responsive while Kokoro creates each local audio segment. Seeking should move to this passage and continue after the requested segment is ready. The reader should keep its place and highlight the spoken text.`);
   const longText = paragraphs.join('\n\n');
   await page.locator('#stopBtn').click();
-  await page.locator('#voiceSelect').selectOption('af_heart');
+  await chooseMenuOption(page, 'voiceSelect', 'af_heart');
   await page.locator('#editBtn').click();
   await page.locator('#textInput').fill(longText);
   await page.locator('#transportPlayBtn').click();
@@ -374,7 +396,7 @@ async function verify() {
   check(Number.parseFloat(seekHandle) >= 79, 'Scrubber handle follows the seek position', `handle is at ${seekHandle}`);
   const activeAfterGeneratedSeek = Number(await page.locator('#textView .speech-chunk.active').getAttribute('data-index'));
   check(Number.isInteger(activeAfterGeneratedSeek) && activeAfterGeneratedSeek >= 0 && activeAfterGeneratedSeek < totalChunks, 'Seek into an already-generated section', `active chunk ${activeAfterGeneratedSeek} of ${totalChunks}`);
-  await page.locator('#rateSelect').selectOption('1.1');
+  await chooseMenuOption(page, 'rateSelect', '1.1');
   check(await page.locator('#rateSelect').inputValue() === '1.1', 'Playback speed selector works', 'speed was explicitly selected as 1.1x');
   await page.locator('#volumeSlider').evaluate((el) => {
     el.value = '37';
@@ -414,10 +436,16 @@ async function verify() {
         documentWidth: document.documentElement.scrollWidth,
         editorBottom: box('.editor-card').bottom,
         playerTop: box('.player').top,
+        scrubBottom: box('.scrub-wrap').bottom,
+        playTop: box('#transportPlayBtn').top,
+        playerChildrenFit: [...document.querySelector('.player').children].every((child) => {
+          const inner = child.getBoundingClientRect(), outer = box('.player');
+          return inner.left >= outer.left && inner.right <= outer.right;
+        }),
       };
     }));
   }
-  const responsiveFit = responsiveLayouts.every((layout) => layout.documentWidth <= layout.width && layout.editorBottom <= layout.playerTop + 1);
+  const responsiveFit = responsiveLayouts.every((layout) => layout.documentWidth <= layout.width && layout.editorBottom <= layout.playerTop + 1 && layout.playTop >= layout.scrubBottom && layout.playerChildrenFit);
   check(responsiveFit, 'Responsive layouts fit above the persistent player', JSON.stringify(responsiveLayouts));
   await captureState(page, '06-mobile-empty');
 
