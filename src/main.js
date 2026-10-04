@@ -2,8 +2,21 @@ import { KokoroReaderSession } from './tts.js';
 import './style.css';
 
 const $ = (id) => document.getElementById(id);
-const ui = Object.fromEntries(['textInput','placeholder','textView','textCount','pasteBtn','editBtn','clearBtn','playBtn','mainPlayLabel','transportPlayBtn','restartBtn','stopBtn','previousBtn','nextBtn','backBtn','forwardBtn','rateBtn','volumeSlider','muteBtn','scrubber','scrubProgress','elapsedTime','totalTime','statusText','statusLed','generationText','chunkCount','generationProgress','bufferStatus','deviceStatus','trackTitle','trackSubtitle','playerTrackTitle','playerTrackMeta','trackWave','toast','helpBtn'].map((id) => [id, $(id)]));
+const ui = Object.fromEntries(['textInput','placeholder','textView','textCount','pasteBtn','editBtn','clearBtn','playBtn','mainPlayLabel','transportPlayBtn','restartBtn','stopBtn','previousBtn','nextBtn','backBtn','forwardBtn','rateBtn','volumeSlider','muteBtn','scrubber','scrubProgress','elapsedTime','totalTime','statusText','statusLed','generationText','chunkCount','generationProgress','bufferStatus','deviceStatus','trackTitle','trackSubtitle','playerTrackTitle','playerTrackMeta','trackWave','toast','helpBtn','voiceSelect','voiceAvatar','voiceMeta'].map((id) => [id, $(id)]));
 const rates = [0.75,0.9,1,1.1,1.25,1.5,1.75,2];
+const voices = [
+  { id: 'af_heart', name: 'Heart', accent: 'AMERICAN · WARM' },
+  { id: 'af_jessica', name: 'Jessica', accent: 'AMERICAN · FEMALE' },
+  { id: 'af_nicole', name: 'Nicole', accent: 'AMERICAN · FEMALE' },
+  { id: 'af_sky', name: 'Sky', accent: 'AMERICAN · FEMALE' },
+  { id: 'am_adam', name: 'Adam', accent: 'AMERICAN · MALE' },
+  { id: 'am_onyx', name: 'Onyx', accent: 'AMERICAN · MALE' },
+  { id: 'am_santa', name: 'Santa', accent: 'AMERICAN · MALE' },
+  { id: 'bf_alice', name: 'Alice', accent: 'BRITISH · FEMALE' },
+  { id: 'bf_emma', name: 'Emma', accent: 'BRITISH · FEMALE' },
+  { id: 'bm_daniel', name: 'Daniel', accent: 'BRITISH · MALE' },
+  { id: 'bm_lewis', name: 'Lewis', accent: 'BRITISH · MALE' },
+];
 const preferencesKey = 'echolink-preferences';
 const textKey = 'echolink-last-text';
 let toastTimer, preparedText = '', viewSpans = [], scrubbing = false, lastStatus = 'ready';
@@ -14,6 +27,16 @@ try { saved = JSON.parse(readLocal(preferencesKey) || readLocal('hush-preference
 const worker = new Worker(new URL('./tts-worker.js', import.meta.url), { type: 'module' });
 const audioContext = new AudioContext({ sampleRate: 24000 });
 const session = new KokoroReaderSession(worker, audioContext, update);
+for (const voice of voices) {
+  const option = document.createElement('option');
+  option.value = voice.id;
+  option.textContent = `${voice.name} (${voice.id})`;
+  ui.voiceSelect.append(option);
+}
+const savedVoice = voices.find(({ id }) => id === saved.voice) || voices[0];
+session.voice = savedVoice.id;
+ui.voiceSelect.value = savedVoice.id;
+renderVoice();
 
 ui.textInput.value = readLocal(textKey) || readLocal('hush-last-text') || '';
 session.rate = Number(saved.rate) || 1;
@@ -21,7 +44,7 @@ session.volume = saved.volume == null ? 0.82 : Number(saved.volume);
 let lastVolume = Number(saved.lastVolume) || (session.volume > 0 ? session.volume : 0.82);
 ui.volumeSlider.value = Math.round(session.volume * 100);
 renderText();
-worker.postMessage({ type: 'initialize' });
+worker.postMessage({ type: 'initialize', voice: session.voice });
 
 function wordCount(text) { return text.trim() ? text.trim().split(/\s+/).length : 0; }
 function formatTime(seconds) {
@@ -32,6 +55,20 @@ function formatTime(seconds) {
 function notify(message) {
   ui.toast.textContent = message; ui.toast.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => ui.toast.classList.remove('show'), 3800);
 }
+function selectedVoice() { return voices.find(({ id }) => id === session.voice) || voices[0]; }
+function renderVoice() {
+  const voice = selectedVoice();
+  ui.voiceAvatar.textContent = voice.name[0];
+  ui.voiceMeta.textContent = voice.accent;
+  ui.playerTrackMeta.textContent = `Kokoro · ${voice.name}`;
+}
+ui.voiceSelect.addEventListener('change', () => {
+  session.stop();
+  session.voice = ui.voiceSelect.value;
+  renderVoice();
+  savePreferences();
+  notify(`${selectedVoice().name} selected. Start listening to use this voice.`);
+});
 function renderText() {
   const text = ui.textInput.value;
   const words = wordCount(text);
@@ -104,7 +141,7 @@ ui.muteBtn.addEventListener('click', () => {
   session.setVolume(muted ? 0 : lastVolume);
   ui.volumeSlider.value = Math.round(session.volume * 100); savePreferences();
 });
-function savePreferences() { writeLocal(preferencesKey, JSON.stringify({ rate: session.rate, volume: session.volume, lastVolume })); }
+function savePreferences() { writeLocal(preferencesKey, JSON.stringify({ rate: session.rate, volume: session.volume, lastVolume, voice: session.voice })); }
 ui.scrubber.addEventListener('input', () => {
   scrubbing = true;
   const duration = session.duration;
@@ -170,7 +207,7 @@ function update(state = {}) {
   ui.trackWave.classList.toggle('active', !!state.playing);
   if (preparedText) {
     ui.trackTitle.textContent = preparedText.trim().split(/\s+/).slice(0,5).join(' ') + (wordCount(preparedText)>5 ? '…' : '');
-    ui.trackSubtitle.textContent = `${wordCount(preparedText).toLocaleString()} words · read by Heart`;
+    ui.trackSubtitle.textContent = `${wordCount(preparedText).toLocaleString()} words · read by ${selectedVoice().name}`;
     ui.playerTrackTitle.textContent = ui.trackTitle.textContent;
   }
   const active = (state.chunks || []).findIndex((chunk) => position >= chunk.start && position < chunk.end);

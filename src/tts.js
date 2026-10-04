@@ -9,6 +9,7 @@ export class KokoroReaderSession {
     this.position = 0;
     this.rate = 1;
     this.volume = 0.82;
+    this.voice = 'af_heart';
     this.playing = false;
     this.paused = false;
     this.source = null;
@@ -32,7 +33,7 @@ export class KokoroReaderSession {
     this.generated = 0;
     this.queueEmpty = false;
     this.paused = true;
-    this.worker.postMessage({ type: 'prepare', sessionId: this.id, chunks: this.chunks.map(({ text, start, end, index }) => ({ text, start, end, index })) });
+    this.worker.postMessage({ type: 'prepare', sessionId: this.id, voice: this.voice, chunks: this.chunks.map(({ text, start, end, index }) => ({ text, start, end, index })) });
     this.emit();
   }
 

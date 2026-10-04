@@ -7,6 +7,7 @@ let cancelled = new Set();
 let queue = [];
 let draining = false;
 let sessionId = 0;
+let selectedVoice = 'af_heart';
 
 const send = (type, data = {}) => self.postMessage({ type, ...data });
 
@@ -24,10 +25,10 @@ async function initializeEngine() {
   transformersEnv.useBrowserCache = false;
   transformersEnv.localModelPath = new URL('/models/', self.location.href).href;
   kokoroEnv.wasmPaths = new URL('/tts/runtime/', self.location.href).href;
-  send('status', { status: 'loading', message: 'Loading Kokoro Heart · FP32 WebGPU' });
-  const voiceUrl = new URL('/tts/voices/af_heart.bin', self.location.href);
+  send('status', { status: 'loading', message: `Loading Kokoro ${selectedVoice} · FP32 WebGPU` });
+  const voiceUrl = new URL(`/tts/voices/${selectedVoice}.bin`, self.location.href);
   const voiceResponse = await fetch(voiceUrl);
-  if (!voiceResponse.ok) throw new Error(`Heart voice file is missing (${voiceResponse.status}). Rebuild the local app assets.`);
+  if (!voiceResponse.ok) throw new Error(`Voice file ${selectedVoice} is missing (${voiceResponse.status}). Rebuild the local app assets.`);
   if (self.caches) {
     try { const voiceCache = await caches.open('kokoro-voices'); await voiceCache.put(voiceUrl.href, voiceResponse.clone()); }
     catch (error) { send('status', { status: 'warning', message: `Heart voice is loaded, but browser cache is unavailable: ${error.message}` }); }
@@ -37,7 +38,7 @@ async function initializeEngine() {
     dtype: 'fp32', device: 'webgpu',
     progress_callback: (event) => send('progress', { progress: event }),
   });
-  send('status', { status: 'ready', message: 'Kokoro Heart is ready' });
+  send('status', { status: 'ready', message: 'Kokoro is ready' });
 }
 
 function enqueue(message) {
@@ -59,10 +60,10 @@ async function drain() {
       await initialize();
       if (cancelled.has(task.sessionId)) continue;
       send('status', { status: 'generating', message: 'Generating speech' });
-      const audio = await engine.generate(task.text, { voice: 'af_heart', speed: 1.0 });
+      const audio = await engine.generate(task.text, { voice: task.voice || selectedVoice, speed: 1.0 });
       if (cancelled.has(task.sessionId)) continue;
       const samples = new Float32Array(audio.audio); // Kokoro RawAudio contains mono 24 kHz float samples.
-      send('audio', { sessionId: task.sessionId, index: task.index, text: task.text, start: task.start, end: task.end, samples }, [samples.buffer]);
+      send('audio', { sessionId: task.sessionId, index: task.index, voice: task.voice || selectedVoice, text: task.text, start: task.start, end: task.end, samples }, [samples.buffer]);
     } catch (error) {
       if (!cancelled.has(task.sessionId)) send('error', { sessionId: task.sessionId, message: error?.message || String(error) });
     }
@@ -74,13 +75,18 @@ async function drain() {
 
 self.onmessage = (event) => {
   const message = event.data;
-  if (message.type === 'initialize') { initialize().catch((error) => send('error', { message: error?.message || String(error) })); return; }
+  if (message.type === 'initialize') {
+    if (message.voice) selectedVoice = message.voice;
+    initialize().catch((error) => send('error', { message: error?.message || String(error) }));
+    return;
+  }
   if (message.type === 'prepare') {
     if (sessionId) cancelled.add(sessionId);
     sessionId = message.sessionId;
     cancelled.delete(sessionId);
     queue = [];
-    for (const chunk of message.chunks) queue.push({ ...chunk, sessionId, priority: false });
+    const voice = message.voice || selectedVoice;
+    for (const chunk of message.chunks) queue.push({ ...chunk, sessionId, voice, priority: false });
     drain();
   }
   if (message.type === 'prioritize') {

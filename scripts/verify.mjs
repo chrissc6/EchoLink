@@ -8,6 +8,7 @@ import { chromium } from 'playwright-core';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const port = Number(fs.readFileSync(path.join(root, 'server.port'), 'utf8').trim());
 const origin = `http://127.0.0.1:${port}`;
+const voiceIds = ['af_heart', 'af_jessica', 'af_nicole', 'af_sky', 'am_adam', 'am_onyx', 'am_santa', 'bf_alice', 'bf_emma', 'bm_daniel', 'bm_lewis'];
 const results = [];
 let serverStarted = false;
 let browser;
@@ -86,7 +87,7 @@ async function verify() {
     ['server-control.ps1', 1000],
     ['vendor/kokoro.js', 10000],
     ['dist/index.html', 1000],
-    ['dist/tts/voices/af_heart.bin', 100000],
+    ...voiceIds.map((voiceId) => [`dist/tts/voices/${voiceId}.bin`, 500000]),
     ['dist/tts/runtime/ort-wasm-simd-threaded.jsep.wasm', 1000000],
     ['dist/tts/runtime/ort-wasm-simd-threaded.jsep.mjs', 10000],
     ['dist/tts/runtime/ort-wasm-simd-threaded.wasm', 1000000],
@@ -105,7 +106,8 @@ async function verify() {
 
   const workerSource = fs.readFileSync(path.join(root, 'src/tts-worker.js'), 'utf8');
   const appSource = fs.readFileSync(path.join(root, 'src/main.js'), 'utf8');
-  check(workerSource.includes("voice: 'af_heart'") && workerSource.includes("device: 'webgpu'") && workerSource.includes('allowRemoteModels = false'), 'Heart/WebGPU/local-only configuration', 'worker selects af_heart + WebGPU and disables remote model downloads');
+  check(workerSource.includes("let selectedVoice = 'af_heart'") && workerSource.includes('voice: task.voice || selectedVoice') && workerSource.includes("device: 'webgpu'") && workerSource.includes('allowRemoteModels = false'), 'Heart default/WebGPU/local-only configuration', 'worker defaults to af_heart, accepts the selected voice, and disables remote model downloads');
+  check(voiceIds.every((voiceId) => fs.readFileSync(path.join(root, 'src/main.js'), 'utf8').includes(`'${voiceId}'`)), 'Requested voices are selectable', `${voiceIds.length} unique requested voice IDs are configured`);
   check(appSource.includes("'previousBtn','nextBtn','backBtn','forwardBtn'") && appSource.includes("'rateBtn','volumeSlider','muteBtn','scrubber'"), 'Playback controls are wired', 'navigation, skip, speed, volume, and scrubber are connected');
 
   const oldServer = powershell('Stop');
@@ -156,7 +158,7 @@ async function verify() {
             if (value !== 0) nonzero++;
             peak = Math.max(peak, Math.abs(value));
           }
-          window.__echolinkVerify.audio.push({ index: data.index, sampleCount: samples.length, finite, nonzero, peak });
+          window.__echolinkVerify.audio.push({ index: data.index, voice: data.voice, sampleCount: samples.length, finite, nonzero, peak });
         }
         listener.call(this, event);
       };
@@ -188,7 +190,9 @@ async function verify() {
   await page.goto(`${origin}/`, { waitUntil: 'domcontentloaded', timeout: 30000 });
   check((await page.title()).includes('EchoLink'), 'Application page renders', await page.title());
   check((await page.locator('.brand').getAttribute('aria-label')) === 'EchoLink home' && (await page.locator('.brand').innerText()).includes('echolink'), 'EchoLink branding renders', 'logo and accessible name use the new app name');
-  check((await page.locator('.voice-name').innerText()).includes('Heart') && (await page.locator('#playerTrackMeta').innerText()).includes('Heart'), 'Heart voice shown in reader', 'Heart is the configured and displayed voice');
+  const initialVoices = await page.locator('#voiceSelect option').evaluateAll((items) => items.map((item) => item.value));
+  check(JSON.stringify(initialVoices) === JSON.stringify(voiceIds), 'Requested voice list renders', `${initialVoices.length} unique options in the requested order`);
+  check(await page.locator('#voiceSelect').inputValue() === 'af_heart' && (await page.locator('#playerTrackMeta').innerText()).includes('Heart'), 'Heart remains the default voice', 'af_heart is selected on a fresh profile');
   await waitFor(page, () => window.__echolinkVerify.messages.some((m) => m.type === 'status' && m.status === 'ready'), 'Kokoro initializes from local assets');
   const requiredLocalRequests = [
     '/tts/voices/af_heart.bin',
@@ -214,14 +218,26 @@ async function verify() {
   await waitFor(page, () => window.__echolinkVerify.sourceStarts.length >= 1, 'Short sentence playback starts', 30000);
   const shortAudio = await page.evaluate(() => window.__echolinkVerify.audio[0]);
   check(shortAudio.sampleCount > 1000 && shortAudio.finite === shortAudio.sampleCount && shortAudio.nonzero > 0 && shortAudio.peak > 0, 'Synthesized audio is non-empty and valid', `${shortAudio.sampleCount} float samples, ${shortAudio.nonzero} non-zero, peak ${shortAudio.peak.toFixed(4)}`);
+  check(shortAudio.voice === 'af_heart', 'Default Heart selection reaches Kokoro synthesis', `worker used ${shortAudio.voice}`);
   const firstSource = await page.evaluate(() => window.__echolinkVerify.sourceStarts[0]);
   check(firstSource.duration > 0 && firstSource.sampleRate === 24000 && firstSource.channels === 1, 'Audio enters Web Audio playback', `${firstSource.duration.toFixed(2)}s mono at ${firstSource.sampleRate}Hz`);
   check(blockedExternal.size === 0, 'No internet requests during offline initialization and synthesis', 'all browser requests were restricted to the loopback origin');
+
+  await page.locator('#stopBtn').click();
+  await page.locator('#voiceSelect').selectOption('af_jessica');
+  check((await page.locator('#playerTrackMeta').innerText()).includes('Jessica'), 'Voice selection updates the reader', 'Jessica is shown as the active voice');
+  await page.locator('#editBtn').click();
+  await page.locator('#textInput').fill('Jessica is speaking a local voice selection check.');
+  await page.locator('#playBtn').click();
+  await waitFor(page, () => window.__echolinkVerify.audio.some((item) => item.voice === 'af_jessica'), 'Alternate voice synthesizes offline', 180000);
+  await waitFor(page, () => window.__echolinkVerify.sourceStarts.length >= 2, 'Alternate voice starts playback', 30000);
+  check(responses.some((item) => new URL(item.url).pathname === '/tts/voices/af_jessica.bin' && item.status === 200), 'Alternate voice embedding loads locally', 'af_jessica.bin returned HTTP 200 from loopback');
 
   const paragraphs = Array.from({ length: 10 }, (_, index) =>
     `Section ${index + 1}. This progressive playback check keeps the interface responsive while Kokoro creates each local audio segment. Seeking should move to this passage and continue after the requested segment is ready. The reader should keep its place and highlight the spoken text.`);
   const longText = paragraphs.join('\n\n');
   await page.locator('#stopBtn').click();
+  await page.locator('#voiceSelect').selectOption('af_heart');
   await page.locator('#editBtn').click();
   await page.locator('#textInput').fill(longText);
   await page.locator('#playBtn').click();
