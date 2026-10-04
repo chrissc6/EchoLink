@@ -12,7 +12,7 @@ Node.js 20.19+ or 22.12+ is required. The ONNX model is stored with Git LFS; ins
 
 Run **EchoLink.cmd** to open the server control menu. Choose **Start** to launch the web server as an independent background process and return to the menu; **Enter** refreshes the live port status; **Stop** releases the port; and **Quit** stops the server, verifies the port is free, then exits. The app uses the single port in `server.port` (4174 by default) and is served at `http://127.0.0.1:4174`. If another process owns that port, the launcher reports the conflict and leaves it alone. `Hush.cmd` remains as a compatibility shortcut and opens the EchoLink menu.
 
-Choose **Verify app** in the menu or run `npm run verify` to rebuild and run the repeatable offline smoke test. It checks bundled assets, server start/stop/restart, browser runtime errors, local-only model/runtime/artwork loads, default Heart (`af_heart`) and alternate Jessica synthesis, progressive generation, playback controls, edit/resume, and the empty/cleared reader state. It also checks layout fit at 1440px, 1024px, 820px, and 390px. It uses installed Microsoft Edge or Chrome with WebGPU and denies all browser requests outside the local server. Each run saves empty, idle, playing, paused, cleared, and mobile-empty UI screenshots under `output/playwright/verification/`. A person should still listen to samples and visually inspect the reader in their target browser/GPU setup.
+Choose **Verify app** in the menu or run `npm run verify` to rebuild and run the repeatable offline smoke test. It checks bundled assets, server start/stop/restart, browser runtime errors, local-only model/runtime/artwork loads, default Heart (`af_heart`) and alternate Jessica synthesis, WAV export validity, local history/settings/help, progressive generation, playback controls, edit/resume, and the empty/cleared reader state. It also checks layout fit at 1440px, 1024px, 820px, and 390px. It uses installed Microsoft Edge or Chrome with WebGPU and blocks every browser request outside the local server, so Kokoro initializes and synthesizes with internet access denied. Each run saves empty, idle, playing, paused, cleared, and mobile-empty UI screenshots under `output/playwright/verification/`. A person should still listen to samples and visually inspect the reader in their target browser/GPU setup.
 
 WebGPU is the required primary backend. Use a current Chrome or Edge build with hardware acceleration enabled. EchoLink does not switch to browser speech synthesis or a different voice if WebGPU is unavailable.
 
@@ -27,7 +27,7 @@ WebGPU is the required primary backend. Use a current Chrome or Edge build with 
 
 ## Visual assets
 
-The local header and player use the supplied copper EchoLink logo and twilight mountain artwork from `public/images/`. The supplied futuristic-reader image is kept in `design-reference/` as a visual guide; it is not loaded by the app. These are served from the local EchoLink server, so they do not add external image requests.
+The header uses a cyan waveform identity mark. The app background uses the supplied space/mountain artwork in `public/images/`; the now-playing card uses the twilight mountain image. The supplied interface image is retained in `design-reference/` as a visual guide. All image files are local. The available History, Settings, and Help panels are local to the browser; Download Audio exports the completed speech as a mono 24 kHz WAV. Export becomes available once all chunks for the current text and voice have finished generating.
 
 ## Rebuild
 

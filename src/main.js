@@ -2,7 +2,7 @@ import { KokoroReaderSession } from './tts.js';
 import './style.css';
 
 const $ = (id) => document.getElementById(id);
-const ui = Object.fromEntries(['textInput','placeholder','textView','textCount','pasteBtn','editBtn','clearBtn','editorCard','readerMode','playBtn','mainPlayLabel','transportPlayBtn','restartBtn','stopBtn','previousBtn','nextBtn','backBtn','forwardBtn','rateSelect','volumeSlider','muteBtn','scrubber','scrubProgress','elapsedTime','totalTime','statusText','statusLed','generationText','chunkCount','generationProgress','bufferStatus','deviceStatus','engineVoice','trackTitle','trackSubtitle','playerTrackTitle','playerTrackMeta','trackWave','toast','helpBtn','voiceSelect','voiceAvatar','voiceMeta'].map((id) => [id, $(id)]));
+const ui = Object.fromEntries(['textInput','placeholder','textView','textCount','pasteBtn','editBtn','clearBtn','editorCard','readerMode','transportPlayBtn','restartBtn','stopBtn','previousBtn','nextBtn','backBtn','forwardBtn','rateSelect','volumeSlider','muteBtn','scrubber','scrubProgress','elapsedTime','totalTime','statusText','statusLed','generationText','chunkCount','generationProgress','bufferStatus','deviceStatus','engineVoice','trackTitle','trackSubtitle','trackWave','toast','helpBtn','historyBtn','settingsBtn','appDialog','dialogTitle','dialogContent','downloadBtn','sideVoice','voiceSelect','voiceAvatar','voiceMeta'].map((id) => [id, $(id)]));
 const rates = [0.75,0.9,1,1.1,1.25,1.5,1.75,2];
 const voices = [
   { id: 'af_heart', name: 'Heart', accent: 'AMERICAN · WARM' },
@@ -19,6 +19,7 @@ const voices = [
 ];
 const preferencesKey = 'echolink-preferences';
 const textKey = 'echolink-last-text';
+const historyKey = 'echolink-history';
 let toastTimer, preparedText = '', viewSpans = [], scrubbing = false, lastStatus = 'ready', lastHighlight = -1;
 function readLocal(key) { try { return localStorage.getItem(key); } catch { return null; } }
 function writeLocal(key, value) { try { localStorage.setItem(key, value); } catch { /* Speech stays available when browser storage is restricted. */ } }
@@ -61,7 +62,7 @@ function renderVoice() {
   ui.voiceAvatar.textContent = voice.name[0];
   ui.voiceMeta.textContent = voice.accent;
   ui.engineVoice.textContent = `${voice.name.toUpperCase()} · ${voice.id.slice(0, 2).toUpperCase()}`;
-  ui.playerTrackMeta.textContent = `Kokoro · ${voice.name}`;
+  ui.sideVoice.textContent = `${voice.name} (${voice.id})`;
   renderTrack();
 }
 ui.voiceSelect.addEventListener('change', () => {
@@ -101,7 +102,54 @@ ui.editBtn.addEventListener('click', () => {
   session.pause(); ui.editorCard.dataset.mode = 'edit'; ui.readerMode.textContent = 'EDITOR';
   ui.editBtn.hidden = true; ui.textView.hidden = true; ui.textInput.hidden = false; ui.textInput.focus();
 });
-ui.helpBtn.addEventListener('click', () => notify('Space: play or pause · ← / →: skip 15 seconds · Shift + ← / →: previous or next sentence'));
+function openPanel(title, markup) {
+  ui.dialogTitle.textContent = title;
+  ui.dialogContent.innerHTML = markup;
+  ui.appDialog.showModal();
+}
+function loadHistory() { try { return JSON.parse(readLocal(historyKey) || '[]'); } catch { return []; } }
+function rememberReading(text) {
+  if (!text.trim()) return;
+  const history = loadHistory().filter((item) => item.text !== text);
+  history.unshift({ text, voice: session.voice, at: Date.now() });
+  writeLocal(historyKey, JSON.stringify(history.slice(0, 20)));
+}
+ui.historyBtn.addEventListener('click', () => {
+  const history = loadHistory();
+  const content = history.length ? `<div class="history-list">${history.map((item, index) => `<button class="history-item" data-history-index="${index}">${escapeHtml(item.text.slice(0, 110))}${item.text.length > 110 ? '…' : ''}<small>${escapeHtml(voices.find((voice) => voice.id === item.voice)?.name || item.voice)} · ${new Date(item.at).toLocaleString()}</small></button>`).join('')}</div>` : '<p class="dialog-copy">Recent readings will appear here on this device.</p>';
+  openPanel('Reading history', content);
+  ui.dialogContent.querySelectorAll('[data-history-index]').forEach((button) => button.addEventListener('click', () => {
+    const item = history[Number(button.dataset.historyIndex)];
+    if (!item) return;
+    session.stop(); preparedText = ''; ui.textView.replaceChildren(); ui.textView.hidden = true; ui.textInput.hidden = false;
+    ui.textInput.value = item.text; ui.voiceSelect.value = voices.some((voice) => voice.id === item.voice) ? item.voice : 'af_heart';
+    session.voice = ui.voiceSelect.value; renderVoice(); renderText(); savePreferences(); ui.appDialog.close();
+  }));
+});
+ui.settingsBtn.addEventListener('click', () => {
+  openPanel('Settings', `<div class="settings-form"><label>Default voice<select id="settingsVoice">${voices.map((voice) => `<option value="${voice.id}" ${voice.id === session.voice ? 'selected' : ''}>${voice.name} (${voice.id})</option>`).join('')}</select></label><label>Playback speed <select id="settingsRate">${rates.map((rate) => `<option value="${rate}" ${rate === session.rate ? 'selected' : ''}>${rate}×</option>`).join('')}</select></label><label>Volume <input id="settingsVolume" type="range" min="0" max="100" value="${Math.round(session.volume * 100)}" /></label><p class="dialog-copy">Preferences are saved locally in this browser.</p></div>`);
+  $('settingsVoice').addEventListener('change', (event) => { ui.voiceSelect.value = event.target.value; ui.voiceSelect.dispatchEvent(new Event('change')); });
+  $('settingsRate').addEventListener('change', (event) => { ui.rateSelect.value = event.target.value; ui.rateSelect.dispatchEvent(new Event('change')); });
+  $('settingsVolume').addEventListener('input', (event) => { ui.volumeSlider.value = event.target.value; ui.volumeSlider.dispatchEvent(new Event('input')); });
+});
+ui.helpBtn.addEventListener('click', () => openPanel('Help', '<div class="dialog-copy"><p>Paste or type text, choose a voice, then press Play. Kokoro generates speech locally on this device.</p><p><kbd>Space</kbd> Play or pause<br><kbd>←</kbd> / <kbd>→</kbd> Skip 15 seconds<br><kbd>Shift</kbd> + arrow Previous or next sentence</p><p>Model, voices, and runtime are served from EchoLink’s local files. Your text and history stay in this browser.</p></div>'));
+function escapeHtml(value) { return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]); }
+ui.downloadBtn.addEventListener('click', () => {
+  if (!session.chunks.length || session.generated !== session.chunks.length || session.chunks.some((chunk) => !chunk.buffer)) { notify('Wait until speech generation is complete to download the full audio.'); return; }
+  downloadWav(session.chunks, preparedText);
+});
+function downloadWav(chunks, text) {
+  const sampleCount = chunks.reduce((sum, chunk) => sum + chunk.buffer.length, 0);
+  const bytes = new ArrayBuffer(44 + sampleCount * 2);
+  const view = new DataView(bytes);
+  const write = (offset, value) => [...value].forEach((char, index) => view.setUint8(offset + index, char.charCodeAt(0)));
+  write(0, 'RIFF'); view.setUint32(4, 36 + sampleCount * 2, true); write(8, 'WAVE'); write(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, 24000, true); view.setUint32(28, 48000, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true); write(36, 'data'); view.setUint32(40, sampleCount * 2, true);
+  let offset = 44;
+  for (const chunk of chunks) for (const sample of chunk.buffer.getChannelData(0)) { const clipped = Math.max(-1, Math.min(1, sample)); view.setInt16(offset, clipped < 0 ? clipped * 32768 : clipped * 32767, true); offset += 2; }
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }));
+  const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${safeFilename(text)}-${session.voice}.wav`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function safeFilename(text) { return (text.trim().split(/\s+/).slice(0, 6).join('-').replace(/[^\p{L}\p{N}-]/gu, '').replace(/-+/g, '-').slice(0, 48) || 'echolink-reading').toLowerCase(); }
 
 function showReadView(text, chunks) {
   ui.textView.replaceChildren(); viewSpans = [];
@@ -122,12 +170,12 @@ async function startOrResume() {
     preparedText = ui.textInput.value;
     session.prepare(preparedText);
     showReadView(preparedText, session.chunks);
+    rememberReading(preparedText);
   }
   if (!session.chunks.length) { ui.textInput.focus(); notify('Paste or type something to read first.'); return; }
   if (!ui.textInput.hidden) showReadView(preparedText, session.chunks);
   await session.play();
 }
-ui.playBtn.addEventListener('click', () => session.playing ? session.pause() : startOrResume());
 ui.transportPlayBtn.addEventListener('click', () => session.playing ? session.pause() : startOrResume());
 ui.backBtn.addEventListener('click', () => session.skip(-15));
 ui.forwardBtn.addEventListener('click', () => session.skip(15));
@@ -161,13 +209,11 @@ function renderTrack() {
   if (!text.trim()) {
     ui.trackTitle.textContent = 'A moment for you';
     ui.trackSubtitle.textContent = 'Paste text to begin';
-    ui.playerTrackTitle.textContent = 'Ready to listen';
     return;
   }
   const words = wordCount(text);
   ui.trackTitle.textContent = text.trim().split(/\s+/).slice(0, 5).join(' ') + (words > 5 ? '…' : '');
   ui.trackSubtitle.textContent = `${words.toLocaleString()} ${words === 1 ? 'word' : 'words'} · ${preparedText ? `read by ${selectedVoice().name}` : 'ready to read'}`;
-  ui.playerTrackTitle.textContent = preparedText ? ui.trackTitle.textContent : 'Ready to listen';
 }
 ui.scrubber.addEventListener('input', () => {
   scrubbing = true;
@@ -175,6 +221,7 @@ ui.scrubber.addEventListener('input', () => {
   const target = duration * Number(ui.scrubber.value) / 1000;
   ui.elapsedTime.textContent = formatTime(target);
   ui.scrubProgress.style.width = `${ui.scrubber.value / 10}%`;
+  ui.scrubber.parentElement.style.setProperty('--seek', `${ui.scrubber.value / 10}%`);
 });
 ui.scrubber.addEventListener('change', () => {
   session.seek(session.duration * Number(ui.scrubber.value) / 1000); scrubbing = false;
@@ -210,7 +257,7 @@ function update(state = {}) {
   else if (lastStatus !== 'loading' && lastStatus !== 'generating') { ui.statusText.textContent = 'Ready when you are'; ui.statusLed.className = 'status-led'; }
   if (state.status === 'ready') { lastStatus = 'ready'; ui.statusText.textContent = session.paused ? (session.chunks.length ? 'Paused' : 'Ready to listen') : (session.playing ? 'Playing' : 'Ready to listen'); ui.statusLed.className = session.playing ? 'status-led playing' : 'status-led'; }
   if (state.message?.includes('WebGPU is unavailable')) ui.deviceStatus.textContent = 'UNAVAILABLE';
-  else if (state.status === 'loading' || state.status === 'ready') ui.deviceStatus.textContent = 'WEBGPU';
+  else if (state.status === 'loading' || state.status === 'ready') ui.deviceStatus.textContent = 'WebGPU acceleration';
   ui.generationText.textContent = state.total && state.generated === state.total ? 'AUDIO READY' : (state.generated ? 'GENERATING SPEECH' : (state.status === 'loading' ? 'LOADING MODEL · FP32' : 'KOKORO · FP32'));
   ui.chunkCount.textContent = `${state.generated || 0} / ${state.total || 0}`;
   ui.generationProgress.style.width = `${state.total ? 100 * state.generated / state.total : (state.status === 'loading' ? '14' : '0')}%`;
@@ -223,15 +270,15 @@ function update(state = {}) {
   if (!scrubbing) {
     const progress = duration ? Math.min(1000, Math.round(position / duration * 1000)) : 0;
     ui.scrubber.value = progress; ui.scrubProgress.style.width = `${progress / 10}%`;
+    ui.scrubber.parentElement.style.setProperty('--seek', `${progress / 10}%`);
   }
   ui.rateSelect.value = String(session.rate);
   ui.muteBtn.classList.toggle('muted', session.volume === 0);
   ui.transportPlayBtn.classList.toggle('is-playing', state.playing);
   ui.transportPlayBtn.setAttribute('aria-label', state.playing ? 'Pause' : 'Play');
   ui.transportPlayBtn.firstElementChild.textContent = state.playing ? 'Ⅱ' : '▶';
-  ui.mainPlayLabel.textContent = state.playing ? 'Pause listening' : (state.generated ? 'Resume listening' : 'Start listening');
-  ui.playBtn.setAttribute('aria-label', state.playing ? 'Pause listening' : (state.generated ? 'Resume listening' : 'Start listening'));
   ui.trackWave.classList.toggle('active', !!state.playing);
+  ui.downloadBtn.disabled = !session.chunks.length || session.generated !== session.chunks.length || session.chunks.some((chunk) => !chunk.buffer);
   if (preparedText) renderTrack();
   const active = (state.chunks || []).findIndex((chunk) => position >= chunk.start && position < chunk.end);
   if (active !== lastHighlight && active < 0) { viewSpans[lastHighlight]?.classList.remove('active'); lastHighlight = -1; }

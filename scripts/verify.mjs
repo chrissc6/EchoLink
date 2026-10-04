@@ -95,6 +95,7 @@ async function verify() {
     ['dist/index.html', 1000],
     ['dist/images/echolink-copper-logo.png', 100000],
     ['dist/images/twilight-mountain-valley.png', 100000],
+    ['dist/images/cosmic-alpine-lake-at-dusk.png', 100000],
     ...voiceIds.map((voiceId) => [`dist/tts/voices/${voiceId}.bin`, 500000]),
     ['dist/tts/runtime/ort-wasm-simd-threaded.jsep.wasm', 1000000],
     ['dist/tts/runtime/ort-wasm-simd-threaded.jsep.mjs', 10000],
@@ -197,13 +198,18 @@ async function verify() {
 
   await page.goto(`${origin}/`, { waitUntil: 'domcontentloaded', timeout: 30000 });
   check((await page.title()).includes('EchoLink'), 'Application page renders', await page.title());
-  check((await page.locator('.brand').getAttribute('aria-label')) === 'EchoLink home' && (await page.locator('.brand').innerText()).includes('echolink'), 'EchoLink branding renders', 'logo and accessible name use the new app name');
+  check((await page.locator('.brand').getAttribute('aria-label')) === 'EchoLink home' && /echolink/i.test(await page.locator('.brand').innerText()), 'EchoLink branding renders', 'logo and accessible name use the new app name');
   const initialVoices = await page.locator('#voiceSelect option').evaluateAll((items) => items.map((item) => item.value));
   check(JSON.stringify(initialVoices) === JSON.stringify(voiceIds), 'Requested voice list renders', `${initialVoices.length} unique options in the requested order`);
-  check(await page.locator('#voiceSelect').inputValue() === 'af_heart' && (await page.locator('#playerTrackMeta').innerText()).includes('Heart'), 'Heart remains the default voice', 'af_heart is selected on a fresh profile');
-  await page.waitForFunction(() => [...document.querySelectorAll('.brand-mark img, .artwork .mountain-art, .art-center img, .mini-art img')].every((image) => image.complete));
-  const visualAssets = await page.locator('.brand-mark img, .artwork .mountain-art, .art-center img, .mini-art img').evaluateAll((images) => images.map(({ currentSrc, naturalWidth }) => ({ path: new URL(currentSrc).pathname, naturalWidth })));
-  check(visualAssets.length === 4 && visualAssets.every(({ naturalWidth }) => naturalWidth > 0), 'Local logo and mountain artwork render', visualAssets.map(({ path, naturalWidth }) => `${path} (${naturalWidth}px)`).join(', '));
+  check(await page.locator('#voiceSelect').inputValue() === 'af_heart' && (await page.locator('#sideVoice').innerText()).includes('Heart'), 'Heart remains the default voice', 'af_heart is selected on a fresh profile');
+  await page.waitForFunction(() => [...document.querySelectorAll('.artwork .mountain-art')].every((image) => image.complete));
+  const visualAssets = await page.locator('.artwork .mountain-art').evaluateAll((images) => images.map(({ currentSrc, naturalWidth }) => ({ path: new URL(currentSrc).pathname, naturalWidth })));
+  check(visualAssets.length === 1 && visualAssets.every(({ naturalWidth }) => naturalWidth > 0), 'Local mountain artwork renders', visualAssets.map(({ path, naturalWidth }) => `${path} (${naturalWidth}px)`).join(', '));
+  const background = await page.evaluate(() => getComputedStyle(document.body).backgroundImage);
+  check(background.includes('/images/cosmic-alpine-lake-at-dusk.png'), 'Space background artwork loads locally', 'mountain and planet background is served from the project image folder');
+  await waitFor(page, () => window.__echolinkVerify.messages.some((m) => m.type === 'status' && m.status === 'loading'), 'Kokoro loading state is reported', 30000);
+  check((await page.locator('#statusLed').getAttribute('class')).includes('loading'), 'Model loading state is visible', await page.locator('#statusText').innerText());
+  await captureState(page, '00-model-loading');
   await waitFor(page, () => window.__echolinkVerify.messages.some((m) => m.type === 'status' && m.status === 'ready'), 'Kokoro initializes from local assets');
   await captureState(page, '01-empty');
   const requiredLocalRequests = [
@@ -227,7 +233,7 @@ async function verify() {
   check(await page.locator('#textInput').inputValue() === shortText, 'Paste text works', 'clipboard text entered through the Paste control');
   check((await page.locator('#trackSubtitle').innerText()).includes('ready to read'), 'Idle text is reflected in the player card', 'word count and ready-to-read state update before playback');
   await captureState(page, '02-text-idle');
-  await page.locator('#playBtn').click();
+  await page.locator('#transportPlayBtn').click();
   await waitFor(page, () => window.__echolinkVerify.audio.length >= 1, 'Short sentence synthesis', 180000);
   await waitFor(page, () => window.__echolinkVerify.sourceStarts.length >= 1, 'Short sentence playback starts', 30000);
   await captureState(page, '03-playing');
@@ -236,19 +242,50 @@ async function verify() {
   check(shortAudio.voice === 'af_heart', 'Default Heart selection reaches Kokoro synthesis', `worker used ${shortAudio.voice}`);
   const firstSource = await page.evaluate(() => window.__echolinkVerify.sourceStarts[0]);
   check(firstSource.duration > 0 && firstSource.sampleRate === 24000 && firstSource.channels === 1, 'Audio enters Web Audio playback', `${firstSource.duration.toFixed(2)}s mono at ${firstSource.sampleRate}Hz`);
+  check(!(await page.locator('#downloadBtn').isDisabled()), 'Download enables after full synthesis', 'complete Heart audio is ready for export');
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#downloadBtn').click();
+  const download = await downloadPromise;
+  const downloadPath = path.join(screenshotDir, 'smoke-audio.wav');
+  await download.saveAs(downloadPath);
+  const wav = fs.readFileSync(downloadPath);
+  check(wav.length > 1000 && wav.subarray(0, 4).toString() === 'RIFF' && wav.subarray(8, 12).toString() === 'WAVE' && wav.readUInt32LE(40) === wav.length - 44, 'Downloaded audio is a valid non-empty WAV', `${download.suggestedFilename()} · ${wav.length.toLocaleString()} bytes`);
+  await page.locator('#historyBtn').click();
+  check((await page.locator('#dialogTitle').innerText()) === 'Reading history' && await page.locator('.history-item').count() > 0, 'History stores the current reading locally', 'recent generated session is listed');
+  await captureState(page, '07-history');
+  await page.locator('.history-item').first().click();
+  check(await page.locator('#textInput').inputValue() === shortText, 'History restores a previous reading', 'stored text returns to the editor');
+  await page.locator('#settingsBtn').click();
+  check((await page.locator('#dialogTitle').innerText()) === 'Settings' && await page.locator('#settingsVoice').inputValue() === 'af_heart', 'Settings reflect persistent defaults', 'Heart and current speed/volume are shown');
+  await captureState(page, '08-settings');
+  await page.locator('#settingsVoice').selectOption('af_sky');
+  await page.locator('#settingsRate').selectOption('1.25');
+  await page.locator('#settingsVolume').evaluate((el) => { el.value = '66'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+  check(await page.locator('#voiceSelect').inputValue() === 'af_sky' && await page.locator('#rateSelect').inputValue() === '1.25' && await page.locator('#volumeSlider').inputValue() === '66', 'Settings update persistent reader preferences', 'voice, speed, and volume apply to the reader');
+  await page.locator('#settingsVoice').selectOption('af_heart');
+  await page.locator('#settingsRate').selectOption('1');
+  await page.locator('#settingsVolume').evaluate((el) => { el.value = '82'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+  await page.locator('.dialog-close').click();
+  await page.locator('#helpBtn').click();
+  check((await page.locator('#dialogTitle').innerText()) === 'Help' && (await page.locator('#dialogContent').innerText()).includes('locally'), 'Help describes shortcuts and local use', 'compact local usage panel opens');
+  await captureState(page, '09-help');
+  await page.locator('.dialog-close').click();
+  await page.locator('#transportPlayBtn').click();
+  await page.waitForFunction(() => !document.querySelector('#textView')?.hidden && document.querySelector('#transportPlayBtn')?.getAttribute('aria-label') === 'Pause');
   await page.locator('#editBtn').click();
   check(await page.locator('#textInput').isVisible() && await page.locator('#readerMode').innerText() === 'EDITOR', 'Edit mode is explicit', 'read view pauses and returns to the editor');
-  await page.locator('#playBtn').click();
+  await page.locator('#transportPlayBtn').click();
   await page.waitForFunction(() => !document.querySelector('#textView')?.hidden && document.querySelector('#transportPlayBtn')?.getAttribute('aria-label') === 'Pause');
   check(await page.locator('#readerMode').innerText() === 'NOW READING', 'Resume restores spoken-text view', 'resuming unchanged text restores highlighting and reading mode');
   check(blockedExternal.size === 0, 'No internet requests during offline initialization and synthesis', 'all browser requests were restricted to the loopback origin');
 
   await page.locator('#stopBtn').click();
   await page.locator('#voiceSelect').selectOption('af_jessica');
-  check((await page.locator('#playerTrackMeta').innerText()).includes('Jessica'), 'Voice selection updates the reader', 'Jessica is shown as the active voice');
+  check((await page.locator('#sideVoice').innerText()).includes('Jessica'), 'Voice selection updates the reader', 'Jessica is shown as the active voice');
+  await captureState(page, '10-alternate-voice');
   await page.locator('#editBtn').click();
   await page.locator('#textInput').fill('Jessica is speaking a local voice selection check.');
-  await page.locator('#playBtn').click();
+  await page.locator('#transportPlayBtn').click();
   await waitFor(page, () => window.__echolinkVerify.audio.some((item) => item.voice === 'af_jessica'), 'Alternate voice synthesizes offline', 180000);
   await waitFor(page, () => window.__echolinkVerify.sourceStarts.length >= 2, 'Alternate voice starts playback', 30000);
   check(responses.some((item) => new URL(item.url).pathname === '/tts/voices/af_jessica.bin' && item.status === 200), 'Alternate voice embedding loads locally', 'af_jessica.bin returned HTTP 200 from loopback');
@@ -260,7 +297,7 @@ async function verify() {
   await page.locator('#voiceSelect').selectOption('af_heart');
   await page.locator('#editBtn').click();
   await page.locator('#textInput').fill(longText);
-  await page.locator('#playBtn').click();
+  await page.locator('#transportPlayBtn').click();
   await waitFor(page, () => document.querySelectorAll('#textView .speech-chunk').length >= 8, 'Long text is split into navigable chunks', 10000);
   await waitFor(page, () => {
     const [generated, total] = (document.querySelector('#chunkCount')?.textContent || '').split('/').map((s) => Number(s.trim()));
@@ -287,7 +324,7 @@ async function verify() {
     const active = Number(document.querySelector('#textView .speech-chunk.active')?.dataset.index ?? -1);
     return active >= total - 2 && document.querySelector('#transportPlayBtn')?.getAttribute('aria-label') === 'Pause';
   }, 'Playback reaches the requested not-yet-generated section', 30000);
-  check(blockedExternal.size === 0, 'Offline synthesis remains local', 'no network request escaped loopback routing');
+  check(blockedExternal.size === 0, 'Offline synthesis remains local', 'browser routing denied internet access while allowing the loopback server');
   await waitFor(page, () => {
     const [generated, total] = (document.querySelector('#chunkCount')?.textContent || '').split('/').map((s) => Number(s.trim()));
     return generated === total && total >= 8;
@@ -333,6 +370,8 @@ async function verify() {
   });
   const scrubbed = await page.locator('#elapsedTime').innerText();
   check(scrubbed !== '0:00' && Number(await scrubber.inputValue()) >= 790, 'Scrubbing works', `seek position ${scrubbed}, slider ${await scrubber.inputValue()}/1000`);
+  const seekHandle = await page.locator('.scrub-wrap').evaluate((el) => getComputedStyle(el).getPropertyValue('--seek').trim());
+  check(Number.parseFloat(seekHandle) >= 79, 'Scrubber handle follows the seek position', `handle is at ${seekHandle}`);
   const activeAfterGeneratedSeek = Number(await page.locator('#textView .speech-chunk.active').getAttribute('data-index'));
   check(Number.isInteger(activeAfterGeneratedSeek) && activeAfterGeneratedSeek >= 0 && activeAfterGeneratedSeek < totalChunks, 'Seek into an already-generated section', `active chunk ${activeAfterGeneratedSeek} of ${totalChunks}`);
   await page.locator('#rateSelect').selectOption('1.1');
@@ -357,12 +396,12 @@ async function verify() {
     placeholderVisible: !document.querySelector('#placeholder')?.hidden,
     scrubber: document.querySelector('#scrubber')?.value,
     elapsed: document.querySelector('#elapsedTime')?.textContent,
-    trackTitle: document.querySelector('#playerTrackTitle')?.textContent,
+    trackTitle: document.querySelector('#trackTitle')?.textContent,
     timeline: document.querySelector('#chunkCount')?.textContent,
     mode: document.querySelector('#editorCard')?.dataset.mode,
   }));
   check(clearedState.text === '' && clearedState.editorVisible && clearedState.readViewHidden && clearedState.placeholderVisible && clearedState.mode === 'edit', 'Clear restores the empty editor state', 'placeholder and empty editor are visible without stale reading content');
-  check(clearedState.scrubber === '0' && clearedState.elapsed === '0:00' && clearedState.timeline?.trim() === '0 / 0' && clearedState.trackTitle === 'Ready to listen', 'Clear resets player and track state', JSON.stringify(clearedState));
+  check(clearedState.scrubber === '0' && clearedState.elapsed === '0:00' && clearedState.timeline?.trim() === '0 / 0' && clearedState.trackTitle === 'A moment for you', 'Clear resets player and track state', JSON.stringify(clearedState));
   await captureState(page, '05-cleared');
 
   const responsiveLayouts = [];
@@ -374,12 +413,11 @@ async function verify() {
         width: innerWidth,
         documentWidth: document.documentElement.scrollWidth,
         editorBottom: box('.editor-card').bottom,
-        quickActionsBottom: getComputedStyle(document.querySelector('.quick-actions')).display === 'none' ? null : box('.quick-actions').bottom,
         playerTop: box('.player').top,
       };
     }));
   }
-  const responsiveFit = responsiveLayouts.every((layout) => layout.documentWidth <= layout.width && (layout.quickActionsBottom ?? layout.editorBottom) <= layout.playerTop + 1);
+  const responsiveFit = responsiveLayouts.every((layout) => layout.documentWidth <= layout.width && layout.editorBottom <= layout.playerTop + 1);
   check(responsiveFit, 'Responsive layouts fit above the persistent player', JSON.stringify(responsiveLayouts));
   await captureState(page, '06-mobile-empty');
 
