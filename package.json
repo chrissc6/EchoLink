@@ -1,0 +1,19 @@
+{
+  "name": "echolink-kokoro-reader",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "verify": "node scripts/verify.mjs"
+  },
+  "dependencies": {
+    "kokoro-js": "1.2.1"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.63.0",
+    "vite": "^8.3.2"
+  }
+}

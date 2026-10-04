@@ -1,0 +1,6 @@
+node_modules/
+.playwright-cli/
+output/playwright/
+.echolink-server.pid
+.hush-server.pid
+npm-debug.log*
