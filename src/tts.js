@@ -133,7 +133,11 @@ export class KokoroReaderSession {
     } else if (m.type === 'queue-empty' && m.sessionId === this.id) {
       this.queueEmpty = true; this.schedule(); this.emit();
     } else if (m.type === 'status') this.emit(m.status, m.message);
-    else if (m.type === 'progress') this.emit('loading', `${m.progress?.status || 'Loading'}${m.progress?.file ? ` · ${m.progress.file}` : ''}`);
+    else if (m.type === 'progress') {
+      const progress = m.progress || {};
+      const percent = Number.isFinite(progress.progress) ? ` · ${Math.round(progress.progress)}%` : '';
+      this.emit('loading', `${progress.status === 'done' ? 'Preparing local model' : 'Loading Kokoro on this device'}${percent}`);
+    }
     else if (m.type === 'error' && (!m.sessionId || m.sessionId === this.id)) this.emit('error', m.message);
   }
   recomputeTimeline() {

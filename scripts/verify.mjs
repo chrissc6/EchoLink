@@ -9,6 +9,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const port = Number(fs.readFileSync(path.join(root, 'server.port'), 'utf8').trim());
 const origin = `http://127.0.0.1:${port}`;
 const voiceIds = ['af_heart', 'af_jessica', 'af_nicole', 'af_sky', 'am_adam', 'am_onyx', 'am_santa', 'bf_alice', 'bf_emma', 'bm_daniel', 'bm_lewis'];
+const screenshotDir = path.join(root, 'output', 'playwright', 'verification');
 const results = [];
 let serverStarted = false;
 let browser;
@@ -74,6 +75,11 @@ async function waitFor(page, expression, description, timeout = 600000) {
   }
 }
 
+async function captureState(page, name) {
+  fs.mkdirSync(screenshotDir, { recursive: true });
+  await page.screenshot({ path: path.join(screenshotDir, `${name}.png`), animations: 'disabled' });
+}
+
 async function verify() {
   const build = spawnSync(process.execPath, [path.join(root, 'node_modules/vite/bin/vite.js'), 'build'], {
     cwd: root, encoding: 'utf8', windowsHide: true, timeout: 180000,
@@ -110,7 +116,7 @@ async function verify() {
   const appSource = fs.readFileSync(path.join(root, 'src/main.js'), 'utf8');
   check(workerSource.includes("let selectedVoice = 'af_heart'") && workerSource.includes('voice: task.voice || selectedVoice') && workerSource.includes("device: 'webgpu'") && workerSource.includes('allowRemoteModels = false'), 'Heart default/WebGPU/local-only configuration', 'worker defaults to af_heart, accepts the selected voice, and disables remote model downloads');
   check(voiceIds.every((voiceId) => fs.readFileSync(path.join(root, 'src/main.js'), 'utf8').includes(`'${voiceId}'`)), 'Requested voices are selectable', `${voiceIds.length} unique requested voice IDs are configured`);
-  check(appSource.includes("'previousBtn','nextBtn','backBtn','forwardBtn'") && appSource.includes("'rateBtn','volumeSlider','muteBtn','scrubber'"), 'Playback controls are wired', 'navigation, skip, speed, volume, and scrubber are connected');
+  check(appSource.includes("'previousBtn','nextBtn','backBtn','forwardBtn'") && appSource.includes("'rateSelect','volumeSlider','muteBtn','scrubber'"), 'Playback controls are wired', 'navigation, skip, speed selection, volume, and scrubber are connected');
 
   const oldServer = powershell('Stop');
   if (oldServer.code !== 0) fail('Port safety preflight', oldServer.output || `Stop returned ${oldServer.code}; refusing to disturb a possible unrelated listener`);
@@ -199,6 +205,7 @@ async function verify() {
   const visualAssets = await page.locator('.brand-mark img, .artwork .mountain-art, .art-center img, .mini-art img').evaluateAll((images) => images.map(({ currentSrc, naturalWidth }) => ({ path: new URL(currentSrc).pathname, naturalWidth })));
   check(visualAssets.length === 4 && visualAssets.every(({ naturalWidth }) => naturalWidth > 0), 'Local logo and mountain artwork render', visualAssets.map(({ path, naturalWidth }) => `${path} (${naturalWidth}px)`).join(', '));
   await waitFor(page, () => window.__echolinkVerify.messages.some((m) => m.type === 'status' && m.status === 'ready'), 'Kokoro initializes from local assets');
+  await captureState(page, '01-empty');
   const requiredLocalRequests = [
     '/tts/voices/af_heart.bin',
     '/models/onnx-community/Kokoro-82M-v1.0-ONNX/onnx/model.onnx',
@@ -218,14 +225,22 @@ async function verify() {
   await page.locator('#pasteBtn').click();
   await page.waitForFunction((text) => document.querySelector('#textInput')?.value === text, shortText, { timeout: 5000 });
   check(await page.locator('#textInput').inputValue() === shortText, 'Paste text works', 'clipboard text entered through the Paste control');
+  check((await page.locator('#trackSubtitle').innerText()).includes('ready to read'), 'Idle text is reflected in the player card', 'word count and ready-to-read state update before playback');
+  await captureState(page, '02-text-idle');
   await page.locator('#playBtn').click();
   await waitFor(page, () => window.__echolinkVerify.audio.length >= 1, 'Short sentence synthesis', 180000);
   await waitFor(page, () => window.__echolinkVerify.sourceStarts.length >= 1, 'Short sentence playback starts', 30000);
+  await captureState(page, '03-playing');
   const shortAudio = await page.evaluate(() => window.__echolinkVerify.audio[0]);
   check(shortAudio.sampleCount > 1000 && shortAudio.finite === shortAudio.sampleCount && shortAudio.nonzero > 0 && shortAudio.peak > 0, 'Synthesized audio is non-empty and valid', `${shortAudio.sampleCount} float samples, ${shortAudio.nonzero} non-zero, peak ${shortAudio.peak.toFixed(4)}`);
   check(shortAudio.voice === 'af_heart', 'Default Heart selection reaches Kokoro synthesis', `worker used ${shortAudio.voice}`);
   const firstSource = await page.evaluate(() => window.__echolinkVerify.sourceStarts[0]);
   check(firstSource.duration > 0 && firstSource.sampleRate === 24000 && firstSource.channels === 1, 'Audio enters Web Audio playback', `${firstSource.duration.toFixed(2)}s mono at ${firstSource.sampleRate}Hz`);
+  await page.locator('#editBtn').click();
+  check(await page.locator('#textInput').isVisible() && await page.locator('#readerMode').innerText() === 'EDITOR', 'Edit mode is explicit', 'read view pauses and returns to the editor');
+  await page.locator('#playBtn').click();
+  await page.waitForFunction(() => !document.querySelector('#textView')?.hidden && document.querySelector('#transportPlayBtn')?.getAttribute('aria-label') === 'Pause');
+  check(await page.locator('#readerMode').innerText() === 'NOW READING', 'Resume restores spoken-text view', 'resuming unchanged text restores highlighting and reading mode');
   check(blockedExternal.size === 0, 'No internet requests during offline initialization and synthesis', 'all browser requests were restricted to the loopback origin');
 
   await page.locator('#stopBtn').click();
@@ -291,6 +306,7 @@ async function verify() {
   if (await playButton.getAttribute('aria-label') === 'Pause') await playButton.click();
   await page.waitForFunction(() => document.querySelector('#transportPlayBtn')?.getAttribute('aria-label') === 'Play');
   check(true, 'Pause works', 'transport changed to Play while paused');
+  await captureState(page, '04-paused');
   await playButton.click();
   await page.waitForFunction(() => document.querySelector('#transportPlayBtn')?.getAttribute('aria-label') === 'Pause');
   check(true, 'Resume works', 'transport resumed playback');
@@ -319,8 +335,8 @@ async function verify() {
   check(scrubbed !== '0:00' && Number(await scrubber.inputValue()) >= 790, 'Scrubbing works', `seek position ${scrubbed}, slider ${await scrubber.inputValue()}/1000`);
   const activeAfterGeneratedSeek = Number(await page.locator('#textView .speech-chunk.active').getAttribute('data-index'));
   check(Number.isInteger(activeAfterGeneratedSeek) && activeAfterGeneratedSeek >= 0 && activeAfterGeneratedSeek < totalChunks, 'Seek into an already-generated section', `active chunk ${activeAfterGeneratedSeek} of ${totalChunks}`);
-  await page.locator('#rateBtn').click();
-  check((await page.locator('#rateBtn').innerText()).includes('1.1'), 'Playback speed control works', 'rate advances from 1.0x to 1.1x');
+  await page.locator('#rateSelect').selectOption('1.1');
+  check(await page.locator('#rateSelect').inputValue() === '1.1', 'Playback speed selector works', 'speed was explicitly selected as 1.1x');
   await page.locator('#volumeSlider').evaluate((el) => {
     el.value = '37';
     el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -332,6 +348,40 @@ async function verify() {
   check(!(await page.locator('#muteBtn').getAttribute('class')).includes('muted'), 'Unmute works', 'volume is restored');
   await page.locator('#stopBtn').click();
   check((await page.locator('#chunkCount').innerText()).trim() === '0 / 0' && (await playButton.getAttribute('aria-label')) === 'Play', 'Stop works', 'generated session cleared and playback stopped');
+  await page.locator('#editBtn').click();
+  await page.locator('#clearBtn').click();
+  const clearedState = await page.evaluate(() => ({
+    text: document.querySelector('#textInput')?.value,
+    editorVisible: !document.querySelector('#textInput')?.hidden,
+    readViewHidden: document.querySelector('#textView')?.hidden,
+    placeholderVisible: !document.querySelector('#placeholder')?.hidden,
+    scrubber: document.querySelector('#scrubber')?.value,
+    elapsed: document.querySelector('#elapsedTime')?.textContent,
+    trackTitle: document.querySelector('#playerTrackTitle')?.textContent,
+    timeline: document.querySelector('#chunkCount')?.textContent,
+    mode: document.querySelector('#editorCard')?.dataset.mode,
+  }));
+  check(clearedState.text === '' && clearedState.editorVisible && clearedState.readViewHidden && clearedState.placeholderVisible && clearedState.mode === 'edit', 'Clear restores the empty editor state', 'placeholder and empty editor are visible without stale reading content');
+  check(clearedState.scrubber === '0' && clearedState.elapsed === '0:00' && clearedState.timeline?.trim() === '0 / 0' && clearedState.trackTitle === 'Ready to listen', 'Clear resets player and track state', JSON.stringify(clearedState));
+  await captureState(page, '05-cleared');
+
+  const responsiveLayouts = [];
+  for (const [width, height] of [[1440, 1000], [1024, 900], [820, 900], [390, 844]]) {
+    await page.setViewportSize({ width, height });
+    responsiveLayouts.push(await page.evaluate(() => {
+      const box = (selector) => document.querySelector(selector).getBoundingClientRect();
+      return {
+        width: innerWidth,
+        documentWidth: document.documentElement.scrollWidth,
+        editorBottom: box('.editor-card').bottom,
+        quickActionsBottom: getComputedStyle(document.querySelector('.quick-actions')).display === 'none' ? null : box('.quick-actions').bottom,
+        playerTop: box('.player').top,
+      };
+    }));
+  }
+  const responsiveFit = responsiveLayouts.every((layout) => layout.documentWidth <= layout.width && (layout.quickActionsBottom ?? layout.editorBottom) <= layout.playerTop + 1);
+  check(responsiveFit, 'Responsive layouts fit above the persistent player', JSON.stringify(responsiveLayouts));
+  await captureState(page, '06-mobile-empty');
 
   check(pageErrors.length === 0, 'No uncaught JavaScript errors', pageErrors.length ? pageErrors.join(' | ') : 'none observed');
   check(consoleErrors.length === 0, 'No browser console errors', consoleErrors.length ? consoleErrors.join(' | ') : 'none observed');

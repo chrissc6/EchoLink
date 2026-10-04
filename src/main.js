@@ -2,7 +2,7 @@ import { KokoroReaderSession } from './tts.js';
 import './style.css';
 
 const $ = (id) => document.getElementById(id);
-const ui = Object.fromEntries(['textInput','placeholder','textView','textCount','pasteBtn','editBtn','clearBtn','playBtn','mainPlayLabel','transportPlayBtn','restartBtn','stopBtn','previousBtn','nextBtn','backBtn','forwardBtn','rateBtn','volumeSlider','muteBtn','scrubber','scrubProgress','elapsedTime','totalTime','statusText','statusLed','generationText','chunkCount','generationProgress','bufferStatus','deviceStatus','trackTitle','trackSubtitle','playerTrackTitle','playerTrackMeta','trackWave','toast','helpBtn','voiceSelect','voiceAvatar','voiceMeta'].map((id) => [id, $(id)]));
+const ui = Object.fromEntries(['textInput','placeholder','textView','textCount','pasteBtn','editBtn','clearBtn','editorCard','readerMode','playBtn','mainPlayLabel','transportPlayBtn','restartBtn','stopBtn','previousBtn','nextBtn','backBtn','forwardBtn','rateSelect','volumeSlider','muteBtn','scrubber','scrubProgress','elapsedTime','totalTime','statusText','statusLed','generationText','chunkCount','generationProgress','bufferStatus','deviceStatus','engineVoice','trackTitle','trackSubtitle','playerTrackTitle','playerTrackMeta','trackWave','toast','helpBtn','voiceSelect','voiceAvatar','voiceMeta'].map((id) => [id, $(id)]));
 const rates = [0.75,0.9,1,1.1,1.25,1.5,1.75,2];
 const voices = [
   { id: 'af_heart', name: 'Heart', accent: 'AMERICAN · WARM' },
@@ -19,7 +19,7 @@ const voices = [
 ];
 const preferencesKey = 'echolink-preferences';
 const textKey = 'echolink-last-text';
-let toastTimer, preparedText = '', viewSpans = [], scrubbing = false, lastStatus = 'ready';
+let toastTimer, preparedText = '', viewSpans = [], scrubbing = false, lastStatus = 'ready', lastHighlight = -1;
 function readLocal(key) { try { return localStorage.getItem(key); } catch { return null; } }
 function writeLocal(key, value) { try { localStorage.setItem(key, value); } catch { /* Speech stays available when browser storage is restricted. */ } }
 let saved = {};
@@ -39,8 +39,8 @@ ui.voiceSelect.value = savedVoice.id;
 renderVoice();
 
 ui.textInput.value = readLocal(textKey) || readLocal('hush-last-text') || '';
-session.rate = Number(saved.rate) || 1;
-session.volume = saved.volume == null ? 0.82 : Number(saved.volume);
+session.rate = rates.includes(Number(saved.rate)) ? Number(saved.rate) : 1;
+session.volume = saved.volume == null ? 0.82 : Math.max(0, Math.min(1, Number(saved.volume)));
 let lastVolume = Number(saved.lastVolume) || (session.volume > 0 ? session.volume : 0.82);
 ui.volumeSlider.value = Math.round(session.volume * 100);
 renderText();
@@ -60,7 +60,9 @@ function renderVoice() {
   const voice = selectedVoice();
   ui.voiceAvatar.textContent = voice.name[0];
   ui.voiceMeta.textContent = voice.accent;
+  ui.engineVoice.textContent = `${voice.name.toUpperCase()} · ${voice.id.slice(0, 2).toUpperCase()}`;
   ui.playerTrackMeta.textContent = `Kokoro · ${voice.name}`;
+  renderTrack();
 }
 ui.voiceSelect.addEventListener('change', () => {
   session.stop();
@@ -73,21 +75,32 @@ function renderText() {
   const text = ui.textInput.value;
   const words = wordCount(text);
   ui.textCount.innerHTML = `${words.toLocaleString()} ${words === 1 ? 'word' : 'words'} <span>·</span> ${text.length.toLocaleString()} characters`;
-  ui.placeholder.hidden = !!text;
-  ui.textInput.classList.toggle('has-text', !!text);
+  ui.placeholder.hidden = !!text.trim();
+  ui.clearBtn.disabled = !text;
+  ui.textInput.classList.toggle('has-text', !!text.trim());
   writeLocal(textKey, text);
   if (text !== preparedText) {
-    ui.textView.hidden = true; ui.textInput.hidden = false;
-    if (session.chunks.length) session.stop();
+    ui.editorCard.dataset.mode = 'edit'; ui.readerMode.textContent = 'EDITOR'; ui.editBtn.hidden = true;
+    ui.textView.hidden = true; ui.textInput.hidden = false; ui.textView.replaceChildren(); viewSpans = []; lastHighlight = -1;
+    if (session.chunks.length) { preparedText = ''; session.stop(); }
   }
+  renderTrack();
 }
 ui.textInput.addEventListener('input', renderText);
 ui.pasteBtn.addEventListener('click', async () => {
   try { ui.textInput.value = await navigator.clipboard.readText(); ui.textInput.focus(); renderText(); }
   catch { ui.textInput.focus(); notify('Clipboard access is unavailable. Use Ctrl+V to paste.'); }
 });
-ui.clearBtn.addEventListener('click', () => { ui.textInput.value = ''; preparedText = ''; session.stop(); ui.textInput.focus(); renderText(); });
-ui.editBtn.addEventListener('click', () => { session.pause(); ui.textView.hidden = true; ui.textInput.hidden = false; ui.textInput.focus(); });
+ui.clearBtn.addEventListener('click', () => {
+  ui.textInput.value = ''; preparedText = ''; viewSpans = []; lastHighlight = -1;
+  ui.editorCard.dataset.mode = 'edit'; ui.readerMode.textContent = 'EDITOR'; ui.editBtn.hidden = true;
+  ui.textView.replaceChildren(); ui.textView.hidden = true; ui.textInput.hidden = false;
+  session.stop(); renderText(); renderTrack(); ui.textInput.focus();
+});
+ui.editBtn.addEventListener('click', () => {
+  session.pause(); ui.editorCard.dataset.mode = 'edit'; ui.readerMode.textContent = 'EDITOR';
+  ui.editBtn.hidden = true; ui.textView.hidden = true; ui.textInput.hidden = false; ui.textInput.focus();
+});
 ui.helpBtn.addEventListener('click', () => notify('Space: play or pause · ← / →: skip 15 seconds · Shift + ← / →: previous or next sentence'));
 
 function showReadView(text, chunks) {
@@ -100,6 +113,7 @@ function showReadView(text, chunks) {
     ui.textView.append(span); viewSpans.push(span); offset = chunk.sourceEnd;
   }
   if (offset < text.length) ui.textView.append(document.createTextNode(text.slice(offset)));
+  ui.editorCard.dataset.mode = 'reading'; ui.readerMode.textContent = 'NOW READING'; ui.editBtn.hidden = false;
   ui.textView.hidden = false; ui.textInput.hidden = true;
 }
 
@@ -110,6 +124,7 @@ async function startOrResume() {
     showReadView(preparedText, session.chunks);
   }
   if (!session.chunks.length) { ui.textInput.focus(); notify('Paste or type something to read first.'); return; }
+  if (!ui.textInput.hidden) showReadView(preparedText, session.chunks);
   await session.play();
 }
 ui.playBtn.addEventListener('click', () => session.playing ? session.pause() : startOrResume());
@@ -129,9 +144,8 @@ function moveSentence(direction) {
   session.seek(session.chunks[target].start);
   if (session.playing && !session.chunks[target].buffer) notify('Preparing that section…');
 }
-ui.rateBtn.addEventListener('click', () => {
-  const index = rates.indexOf(session.rate);
-  session.setPlaybackRate(rates[(index + 1) % rates.length]);
+ui.rateSelect.addEventListener('change', () => {
+  session.setPlaybackRate(Number(ui.rateSelect.value));
   savePreferences();
 });
 ui.volumeSlider.addEventListener('input', () => { session.setVolume(Number(ui.volumeSlider.value) / 100); if (session.volume > 0) lastVolume = session.volume; savePreferences(); });
@@ -142,6 +156,19 @@ ui.muteBtn.addEventListener('click', () => {
   ui.volumeSlider.value = Math.round(session.volume * 100); savePreferences();
 });
 function savePreferences() { writeLocal(preferencesKey, JSON.stringify({ rate: session.rate, volume: session.volume, lastVolume, voice: session.voice })); }
+function renderTrack() {
+  const text = preparedText || ui.textInput.value;
+  if (!text.trim()) {
+    ui.trackTitle.textContent = 'A moment for you';
+    ui.trackSubtitle.textContent = 'Paste text to begin';
+    ui.playerTrackTitle.textContent = 'Ready to listen';
+    return;
+  }
+  const words = wordCount(text);
+  ui.trackTitle.textContent = text.trim().split(/\s+/).slice(0, 5).join(' ') + (words > 5 ? '…' : '');
+  ui.trackSubtitle.textContent = `${words.toLocaleString()} ${words === 1 ? 'word' : 'words'} · ${preparedText ? `read by ${selectedVoice().name}` : 'ready to read'}`;
+  ui.playerTrackTitle.textContent = preparedText ? ui.trackTitle.textContent : 'Ready to listen';
+}
 ui.scrubber.addEventListener('input', () => {
   scrubbing = true;
   const duration = session.duration;
@@ -168,7 +195,6 @@ document.addEventListener('keydown', (event) => {
   else if (event.key === 'ArrowRight') { event.preventDefault(); session.skip(15); }
 });
 
-let lastHighlight = -1;
 function update(state = {}) {
   if (state.status === 'error') { lastStatus = 'error'; ui.statusText.textContent = state.message || 'Something went wrong'; ui.statusLed.className = 'status-led error'; notify(state.message || 'Speech generation failed.'); }
   else if (state.status === 'loading') {
@@ -194,22 +220,19 @@ function update(state = {}) {
   const duration = state.duration ?? session.duration;
   ui.elapsedTime.textContent = formatTime(position);
   ui.totalTime.textContent = duration ? formatTime(duration) : '0:00';
-  if (!scrubbing && duration) {
-    const progress = Math.min(1000, Math.round(position / duration * 1000));
+  if (!scrubbing) {
+    const progress = duration ? Math.min(1000, Math.round(position / duration * 1000)) : 0;
     ui.scrubber.value = progress; ui.scrubProgress.style.width = `${progress / 10}%`;
   }
-  ui.rateBtn.innerHTML = `${Number(session.rate.toFixed(2))}<span>x</span>`;
+  ui.rateSelect.value = String(session.rate);
   ui.muteBtn.classList.toggle('muted', session.volume === 0);
   ui.transportPlayBtn.classList.toggle('is-playing', state.playing);
   ui.transportPlayBtn.setAttribute('aria-label', state.playing ? 'Pause' : 'Play');
   ui.transportPlayBtn.firstElementChild.textContent = state.playing ? 'Ⅱ' : '▶';
   ui.mainPlayLabel.textContent = state.playing ? 'Pause listening' : (state.generated ? 'Resume listening' : 'Start listening');
+  ui.playBtn.setAttribute('aria-label', state.playing ? 'Pause listening' : (state.generated ? 'Resume listening' : 'Start listening'));
   ui.trackWave.classList.toggle('active', !!state.playing);
-  if (preparedText) {
-    ui.trackTitle.textContent = preparedText.trim().split(/\s+/).slice(0,5).join(' ') + (wordCount(preparedText)>5 ? '…' : '');
-    ui.trackSubtitle.textContent = `${wordCount(preparedText).toLocaleString()} words · read by ${selectedVoice().name}`;
-    ui.playerTrackTitle.textContent = ui.trackTitle.textContent;
-  }
+  if (preparedText) renderTrack();
   const active = (state.chunks || []).findIndex((chunk) => position >= chunk.start && position < chunk.end);
   if (active !== lastHighlight && active < 0) { viewSpans[lastHighlight]?.classList.remove('active'); lastHighlight = -1; }
   if (active !== lastHighlight && active >= 0 && viewSpans[active]) {
