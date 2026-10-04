@@ -203,6 +203,14 @@ async function verify() {
 
   await page.goto(`${origin}/`, { waitUntil: 'domcontentloaded', timeout: 30000 });
   check((await page.title()).includes('EchoLink'), 'Application page renders', await page.title());
+  const editorPrompt = await page.evaluate(() => ({
+    text: document.querySelector('#placeholder strong')?.textContent,
+    input: document.querySelector('#textInput')?.value,
+    pointerEvents: getComputedStyle(document.querySelector('#placeholder')).pointerEvents,
+  }));
+  check(editorPrompt.text?.includes('Add your text') && editorPrompt.input === '' && editorPrompt.pointerEvents === 'none', 'Empty editor keeps non-selectable guidance visible', JSON.stringify(editorPrompt));
+  const scrubberStyle = await page.evaluate(() => ({ thumb: getComputedStyle(document.querySelector('.scrub-wrap'), '::after').display, rangeOpacity: getComputedStyle(document.querySelector('#scrubber')).opacity }));
+  check(scrubberStyle.thumb === 'none' && scrubberStyle.rangeOpacity === '0', 'Seek thumb is hidden while the range remains interactive', JSON.stringify(scrubberStyle));
   const favicon = await page.locator('link[rel="icon"]').getAttribute('href');
   const faviconUrl = new URL(favicon, origin);
   const faviconResponse = await fetch(faviconUrl);
@@ -255,6 +263,9 @@ async function verify() {
   check(await page.locator('#textInput').inputValue() === shortText, 'Paste text works', 'clipboard text entered through the Paste control');
   check((await page.locator('#trackSubtitle').innerText()).includes('ready to read'), 'Idle text is reflected in the player card', 'word count and ready-to-read state update before playback');
   await captureState(page, '02-text-idle');
+  await page.locator('#transportPlayBtn').evaluate((button) => { button.click(); button.click(); });
+  await page.waitForFunction(() => document.querySelector('#transportPlayBtn')?.getAttribute('aria-label') === 'Play', null, { timeout: 5000 });
+  check(true, 'Rapid Play then Pause clicks leave playback paused', 'toggle state updates before audio-context resume finishes');
   await page.locator('#transportPlayBtn').click();
   await waitFor(page, () => window.__echolinkVerify.audio.length >= 1, 'Short sentence synthesis', 180000);
   await waitFor(page, () => window.__echolinkVerify.sourceStarts.length >= 1, 'Short sentence playback starts', 30000);

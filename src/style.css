@@ -53,3 +53,9 @@
 @media(max-width:1000px){.transport-play{width:60px;height:60px}.speed-control{width:74px}.timeline{margin-bottom:4px}.transport-buttons{gap:7px}.player{padding-top:8px;padding-bottom:9px}}
 @media(max-width:720px){.custom-select-menu{max-height:48vh}.voice-card .custom-select-trigger{font-size:14px}.speed-control{width:64px}.player{padding-top:9px;padding-bottom:10px}.timeline{margin-bottom:3px}.player-controls{align-items:start}.transport-play{width:56px;height:56px;transform:translateY(-5px)}.transport-play:hover{transform:translateY(-7px)}.transport-button{width:32px;height:34px;border-radius:10px}.volume-button{width:30px;height:30px}.volume-button svg{width:20px;height:20px}.download-button svg{width:19px;height:19px}}
 @media(max-width:390px){.voice-card .custom-select-value{gap:6px}.voice-card .custom-option-meta{font-size:11px}.transport-play{width:52px;height:52px}.transport-buttons{gap:0}.transport-button{width:29px}.player-options{gap:5px}}
+
+/* Keep the seek bar clean while retaining a transparent, accessible range control. */
+.scrub-wrap input{appearance:none;-webkit-appearance:none;opacity:0}
+.scrub-wrap input::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:0;height:0;border:0}
+.scrub-wrap input::-moz-range-thumb{width:0;height:0;border:0}
+.scrub-wrap:after{display:none}

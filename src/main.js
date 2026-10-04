@@ -308,7 +308,8 @@ async function startOrResume() {
   }
   if (!session.chunks.length) { ui.textInput.focus(); notify('Paste or type something to read first.'); return; }
   if (!ui.textInput.hidden) showReadView(preparedText, session.chunks);
-  await session.play();
+  try { await session.play(); }
+  catch (error) { notify(`Audio playback could not start: ${error?.message || error}`); }
 }
 ui.transportPlayBtn.addEventListener('click', () => session.playing ? session.pause() : startOrResume());
 ui.backBtn.addEventListener('click', () => session.skip(-15));

@@ -38,10 +38,22 @@ export class KokoroReaderSession {
   }
 
   async play() {
-    await this.context.resume();
+    if (this.playing) return;
+    // Reflect the request immediately so a quick second click can reliably pause
+    // while AudioContext.resume() is still pending (common on first interaction).
     this.playing = true;
     this.paused = false;
     this.startedPosition = this.position;
+    this.emit();
+    try {
+      await this.context.resume();
+    } catch (error) {
+      this.playing = false;
+      this.paused = true;
+      this.emit('error', error?.message || 'Audio playback could not start.');
+      throw error;
+    }
+    if (!this.playing) return;
     this.schedule();
     this.emit();
   }
