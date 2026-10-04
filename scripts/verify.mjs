@@ -211,7 +211,7 @@ async function verify() {
     input: document.querySelector('#textInput')?.value,
     pointerEvents: getComputedStyle(document.querySelector('#placeholder')).pointerEvents,
   }));
-  check(editorPrompt.text?.includes('Add your text') && editorPrompt.input === '' && editorPrompt.pointerEvents === 'none', 'Empty editor keeps non-selectable guidance visible', JSON.stringify(editorPrompt));
+  check(editorPrompt.text?.includes('Place your text') && editorPrompt.input === '' && editorPrompt.pointerEvents === 'none', 'Empty editor keeps non-selectable guidance visible', JSON.stringify(editorPrompt));
   const scrubberStyle = await page.evaluate(() => ({ thumb: getComputedStyle(document.querySelector('.scrub-wrap'), '::after').display, rangeOpacity: getComputedStyle(document.querySelector('#scrubber')).opacity }));
   check(scrubberStyle.thumb === 'none' && scrubberStyle.rangeOpacity === '0', 'Seek thumb is hidden while the range remains interactive', JSON.stringify(scrubberStyle));
   const favicon = await page.locator('link[rel="icon"]').getAttribute('href');
@@ -441,17 +441,24 @@ async function verify() {
   await captureState(page, '05-cleared');
 
   const responsiveLayouts = [];
-  for (const [width, height] of [[1440, 1000], [1024, 900], [820, 900], [390, 844]]) {
+  for (const [width, height] of [[320, 568], [320, 640], [360, 740], [390, 844], [430, 932], [600, 900], [768, 900], [820, 900], [1024, 768], [1280, 800], [1440, 900], [1920, 1080], [2560, 1440]]) {
     await page.setViewportSize({ width, height });
     responsiveLayouts.push(await page.evaluate(() => {
       const box = (selector) => document.querySelector(selector).getBoundingClientRect();
       return {
         width: innerWidth,
         documentWidth: document.documentElement.scrollWidth,
+        bodyWidth: document.body.scrollWidth,
         editorBottom: box('.editor-card').bottom,
+        promptBottom: Math.max(box('#placeholder strong').bottom, box('#placeholder span').bottom),
+        editorFooterTop: box('.editor-footer').top,
         playerTop: box('.player').top,
         scrubBottom: box('.scrub-wrap').bottom,
         playTop: box('#transportPlayBtn').top,
+        playerOverflow: [...document.querySelectorAll('.player button, .player input, .player select')].filter((element) => {
+          const rect = element.getBoundingClientRect();
+          return rect.width > 0 && (rect.left < 0 || rect.right > innerWidth + 1);
+        }).map((element) => element.id || element.className),
         playerChildrenFit: [...document.querySelector('.player').children].every((child) => {
           const inner = child.getBoundingClientRect(), outer = box('.player');
           return inner.left >= outer.left && inner.right <= outer.right;
@@ -459,7 +466,7 @@ async function verify() {
       };
     }));
   }
-  const responsiveFit = responsiveLayouts.every((layout) => layout.documentWidth <= layout.width && layout.editorBottom <= layout.playerTop + 1 && layout.playTop >= layout.scrubBottom && layout.playerChildrenFit);
+  const responsiveFit = responsiveLayouts.every((layout) => layout.documentWidth <= layout.width && layout.bodyWidth <= layout.width && layout.editorBottom <= layout.playerTop + 1 && layout.promptBottom <= layout.editorFooterTop && layout.playTop >= layout.scrubBottom && layout.playerChildrenFit && layout.playerOverflow.length === 0);
   check(responsiveFit, 'Responsive layouts fit above the persistent player', JSON.stringify(responsiveLayouts));
   await captureState(page, '06-mobile-empty');
 
