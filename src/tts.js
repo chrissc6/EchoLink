@@ -23,10 +23,10 @@ export class KokoroReaderSession {
     worker.addEventListener('message', this.onMessage);
   }
 
-  prepare(text) {
+  prepare(text, { cleanFormatting = false } = {}) {
     this.stop();
     this.id++;
-    this.chunks = chunkText(text);
+    this.chunks = chunkText(cleanFormatting ? cleanEchoLinkText(text) : text);
     this.recomputeTimeline();
     this.position = 0;
     this.cursor = 0;
@@ -144,13 +144,13 @@ export class KokoroReaderSession {
       this.schedule(); this.emit();
     } else if (m.type === 'queue-empty' && m.sessionId === this.id) {
       this.queueEmpty = true; this.schedule(); this.emit();
-    } else if (m.type === 'status') this.emit(m.status, m.message);
+    } else if (m.type === 'status') this.emit(m.status, m.message, m);
     else if (m.type === 'progress') {
       const progress = m.progress || {};
       const percent = Number.isFinite(progress.progress) ? ` · ${Math.round(progress.progress)}%` : '';
       this.emit('loading', `${progress.status === 'done' ? 'Preparing local model' : 'Loading Kokoro on this device'}${percent}`);
     }
-    else if (m.type === 'error' && (!m.sessionId || m.sessionId === this.id)) this.emit('error', m.message);
+    else if (m.type === 'error' && (!m.sessionId || m.sessionId === this.id)) this.emit('error', m.message, m);
   }
   recomputeTimeline() {
     let cursor = 0;
@@ -161,9 +161,48 @@ export class KokoroReaderSession {
     }
     this.duration = cursor;
   }
-  emit(status, message) {
-    this.onUpdate?.({ status, message, playing: this.playing, paused: this.paused, position: this.currentPosition(), duration: this.duration, generated: this.generated, total: this.chunks.length, chunks: this.chunks, cursor: this.cursor, buffering: this.playing && !this.source && !this.queueEmpty });
+  emit(status, message, details = {}) {
+    this.onUpdate?.({ ...details, status, message, playing: this.playing, paused: this.paused, position: this.currentPosition(), duration: this.duration, generated: this.generated, total: this.chunks.length, chunks: this.chunks, cursor: this.cursor, buffering: this.playing && !this.source && !this.queueEmpty });
   }
+}
+
+/** Replace Markdown presentation syntax with spaces while retaining source offsets for highlighting. */
+export function cleanEchoLinkText(input) {
+  const source = String(input || '');
+  const output = source.split('');
+  const blank = (start, end) => {
+    for (let index = start; index < end; index += 1) {
+      if (output[index] !== '\n' && output[index] !== '\r') output[index] = ' ';
+    }
+  };
+  for (const match of source.matchAll(/(!?)\[([^\]\r\n]*)\]\((?:<[^>\r\n]*>|[^)\r\n]*)\)/g)) {
+    const start = match.index;
+    const labelStart = start + match[1].length + 1;
+    const labelEnd = labelStart + match[2].length;
+    blank(start, labelStart);
+    blank(labelEnd, start + match[0].length);
+  }
+  for (const match of source.matchAll(/^[ \t]*(`{3,}|~{3,})[^\r\n]*$/gm)) {
+    const marker = match[0].search(/`{3,}|~{3,}/);
+    blank(match.index + marker, match.index + match[0].length);
+  }
+  for (const match of source.matchAll(/(`+)([^`\r\n]+)\1/g)) {
+    blank(match.index, match.index + match[1].length);
+    blank(match.index + match[0].length - match[1].length, match.index + match[0].length);
+  }
+  for (const match of source.matchAll(/^[ \t]{0,3}(?:#{1,6}(?=\s)|>+\s?|[-+*](?=\s))\s*/gm)) blank(match.index, match.index + match[0].length);
+  for (const match of source.matchAll(/^[ \t]{0,3}(?:[-*_]\s*){3,}$/gm)) blank(match.index, match.index + match[0].length);
+  for (const match of source.matchAll(/(\*\*|__|~~|\*|_)([^\r\n]*?\S)\1/g)) {
+    blank(match.index, match.index + match[1].length);
+    blank(match.index + match[0].length - match[1].length, match.index + match[0].length);
+  }
+  for (let index = 0; index < output.length; index += 1) {
+    if (!/[,.;:!?]/.test(output[index])) continue;
+    let start = index;
+    while (start > 0 && /[ \t]/.test(output[start - 1])) start -= 1;
+    if (start < index) { output[start] = output[index]; output[index] = ' '; }
+  }
+  return output.join('');
 }
 
 export function chunkText(input, maxChars = 260) {

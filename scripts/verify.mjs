@@ -4,6 +4,7 @@ import net from 'node:net';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { cleanEchoLinkText } from '../src/tts.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const port = Number(fs.readFileSync(path.join(root, 'server.port'), 'utf8').trim());
@@ -113,6 +114,7 @@ async function verify() {
     ['dist/models/onnx-community/Kokoro-82M-v1.0-ONNX/tokenizer.json', 1000],
     ['dist/models/onnx-community/Kokoro-82M-v1.0-ONNX/tokenizer_config.json', 50],
     ['dist/models/onnx-community/Kokoro-82M-v1.0-ONNX/onnx/model.onnx', 200_000_000],
+    ['dist/models/onnx-community/Kokoro-82M-v1.0-ONNX/onnx/model_quantized.onnx', 80_000_000],
   ];
   const missing = required.filter(([file, min]) => !fs.existsSync(path.join(root, file)) || fs.statSync(path.join(root, file)).size < min);
   const outputAssets = fs.readdirSync(path.join(root, 'dist/assets'));
@@ -123,7 +125,9 @@ async function verify() {
 
   const workerSource = fs.readFileSync(path.join(root, 'src/tts-worker.js'), 'utf8');
   const appSource = fs.readFileSync(path.join(root, 'src/main.js'), 'utf8');
-  check(workerSource.includes("let selectedVoice = 'af_heart'") && workerSource.includes('voice: task.voice || selectedVoice') && workerSource.includes("device: 'webgpu'") && workerSource.includes('allowRemoteModels = false'), 'Heart default/WebGPU/local-only configuration', 'worker defaults to af_heart, accepts the selected voice, and disables remote model downloads');
+  check(workerSource.includes("const VOICE_DEFAULT = 'af_heart'") && workerSource.includes('voice: task.voice || selectedVoice') && workerSource.includes("backend: 'webgpu'") && workerSource.includes("id: 'wasm-q8'") && workerSource.includes('allowRemoteModels = false'), 'Heart default and best-first local engine configuration', 'worker prefers local WebGPU on desktop, has a compact WASM fallback, and disables remote model downloads');
+  const cleaned = cleanEchoLinkText('# Heading\n\n**Bold** and `code`.\n\n- Item 12.');
+  check(cleaned.length === '# Heading\n\n**Bold** and `code`.\n\n- Item 12.'.length && cleaned.includes('Bold') && cleaned.includes('Item 12') && !cleaned.includes('**'), 'Markdown speech cleanup preserves source positions and list numbers', JSON.stringify(cleaned));
   check(voiceIds.every((voiceId) => fs.readFileSync(path.join(root, 'src/main.js'), 'utf8').includes(`'${voiceId}'`)), 'Requested voices are selectable', `${voiceIds.length} unique requested voice IDs are configured`);
   check(appSource.includes("'previousBtn','nextBtn','backBtn','forwardBtn'") && appSource.includes("'rateSelect','volumeSlider','muteBtn','scrubber'"), 'Playback controls are wired', 'navigation, skip, speed selection, volume, and scrubber are connected');
 
@@ -165,7 +169,7 @@ async function verify() {
       if (type !== 'message') return originalAdd.call(this, type, listener, options);
       const wrapped = (event) => {
         const data = event.data || {};
-        window.__echolinkVerify.messages.push({ type: data.type, status: data.status, message: data.message, progress: data.progress?.file });
+        window.__echolinkVerify.messages.push({ type: data.type, status: data.status, message: data.message, progress: data.progress?.file, engineId: data.engineId, engineMode: data.engineMode, backend: data.backend, dtype: data.dtype, chunks: data.chunks?.map((chunk) => chunk.text) });
         if (data.type === 'audio' && data.samples instanceof Float32Array) {
           const samples = data.samples;
           let finite = 0, nonzero = 0, peak = 0;
@@ -175,7 +179,7 @@ async function verify() {
             if (value !== 0) nonzero++;
             peak = Math.max(peak, Math.abs(value));
           }
-          window.__echolinkVerify.audio.push({ index: data.index, voice: data.voice, sampleCount: samples.length, finite, nonzero, peak });
+          window.__echolinkVerify.audio.push({ index: data.index, voice: data.voice, text: data.text, sampleCount: samples.length, finite, nonzero, peak });
         }
         listener.call(this, event);
       };
@@ -204,8 +208,13 @@ async function verify() {
     if (url.origin !== origin) blockedExternal.add(url.href);
   });
 
+  await context.addInitScript(() => localStorage.setItem('echolink-last-text', 'A stale draft from an earlier version.'));
   await page.goto(`${origin}/`, { waitUntil: 'domcontentloaded', timeout: 30000 });
   check((await page.title()).includes('EchoLink'), 'Application page renders', await page.title());
+  check(await page.locator('#textInput').inputValue() === '', 'Editor draft does not persist across refresh', 'legacy saved text is ignored and session starts empty');
+  await page.locator('#textInput').fill('A draft that should not be playable yet.');
+  check(await page.locator('#editorPlayBtn').isDisabled() && await page.locator('#transportPlayBtn').isDisabled(), 'Play stays disabled until local Kokoro passes its voice check', 'both editor and transport actions wait for the model self-test');
+  await page.locator('#textInput').fill('');
   const editorPrompt = await page.evaluate(() => ({
     text: document.querySelector('#placeholder strong')?.textContent,
     input: document.querySelector('#textInput')?.value,
@@ -244,6 +253,7 @@ async function verify() {
   check((await page.locator('#statusLed').getAttribute('class')).includes('loading'), 'Model loading state is visible', await page.locator('#statusText').innerText());
   await captureState(page, '00-model-loading');
   await waitFor(page, () => window.__echolinkVerify.messages.some((m) => m.type === 'status' && m.status === 'ready'), 'Kokoro initializes from local assets');
+  check(await page.locator('#editorPlayBtn').isDisabled(), 'Empty editor keeps quick Play disabled after model initialization', 'a ready voice does not enable Play without text');
   await captureState(page, '01-empty');
   const requiredLocalRequests = [
     '/tts/voices/af_heart.bin',
@@ -258,24 +268,41 @@ async function verify() {
   const requiredRuntime = seenUrls.filter((url) => url.startsWith('/tts/runtime/'));
   check(requiredRuntime.some((url) => url.endsWith('.wasm')) && requiredRuntime.some((url) => url.endsWith('.mjs')), 'ONNX runtime loads locally', requiredRuntime.join(', '));
 
-  const shortText = 'This is a short offline Kokoro verification sentence.';
+  const shortText = '# This is a short offline Kokoro verification sentence.\n\n- Item 12.';
   await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
   await page.evaluate((text) => navigator.clipboard.writeText(text), shortText);
   await page.locator('#pasteBtn').click();
   await page.waitForFunction((text) => document.querySelector('#textInput')?.value === text, shortText, { timeout: 5000 });
   check(await page.locator('#textInput').inputValue() === shortText, 'Paste text works', 'clipboard text entered through the Paste control');
+  check(!(await page.locator('#copyBtn').isDisabled()) && !(await page.locator('#editorPlayBtn').isDisabled()), 'Editor quick actions enable when text and model are ready', 'Copy and Play are available for a non-empty draft');
+  await page.locator('#copyBtn').click();
+  await page.waitForFunction(() => document.querySelector('#toast')?.textContent === 'Text copied.');
+  await page.waitForTimeout(100);
+  const copiedText = await page.evaluate(() => navigator.clipboard.readText());
+  const normalizeNewlines = (text) => text.replace(/\r\n?/g, '\n');
+  check(normalizeNewlines(copiedText) === normalizeNewlines(shortText), 'Copy control copies the editor text', normalizeNewlines(copiedText) === normalizeNewlines(shortText) ? 'clipboard text and line breaks match the editor' : `clipboard=${JSON.stringify(copiedText)}; expected=${JSON.stringify(shortText)}`);
+  await page.locator('#fileInput').setInputFiles({ name: 'imported.txt', mimeType: 'text/plain', buffer: Buffer.from('Imported from a local text file.') });
+  check(await page.locator('#textInput').inputValue() === 'Imported from a local text file.', 'Open file imports local text', 'the selected text file contents appear in the editor');
+  await page.locator('#clearBtn').click();
+  check(await page.locator('#textInput').inputValue() === '' && await page.locator('#copyBtn').isDisabled() && await page.locator('#clearBtn').isDisabled(), 'Clear disables empty-editor actions', 'Clear and Copy disable when the draft is empty');
+  await page.locator('#pasteBtn').click();
+  await page.waitForFunction((text) => document.querySelector('#textInput')?.value === text, shortText, { timeout: 5000 });
   check((await page.locator('#trackSubtitle').innerText()).includes('ready to read'), 'Idle text is reflected in the player card', 'word count and ready-to-read state update before playback');
   await captureState(page, '02-text-idle');
   await page.locator('#transportPlayBtn').evaluate((button) => { button.click(); button.click(); });
   await page.waitForFunction(() => document.querySelector('#transportPlayBtn')?.getAttribute('aria-label') === 'Play', null, { timeout: 5000 });
   check(true, 'Rapid Play then Pause clicks leave playback paused', 'toggle state updates before audio-context resume finishes');
-  await page.locator('#transportPlayBtn').click();
+  await page.locator('#editorPlayBtn').click();
   await waitFor(page, () => window.__echolinkVerify.audio.length >= 1, 'Short sentence synthesis', 180000);
   await waitFor(page, () => window.__echolinkVerify.sourceStarts.length >= 1, 'Short sentence playback starts', 30000);
   await captureState(page, '03-playing');
   const shortAudio = await page.evaluate(() => window.__echolinkVerify.audio[0]);
   check(shortAudio.sampleCount > 1000 && shortAudio.finite === shortAudio.sampleCount && shortAudio.nonzero > 0 && shortAudio.peak > 0, 'Synthesized audio is non-empty and valid', `${shortAudio.sampleCount} float samples, ${shortAudio.nonzero} non-zero, peak ${shortAudio.peak.toFixed(4)}`);
   check(shortAudio.voice === 'af_heart', 'Default Heart selection reaches Kokoro synthesis', `worker used ${shortAudio.voice}`);
+  await waitFor(page, () => window.__echolinkVerify.audio.some((item) => item.text?.includes('Item 12')), 'Clean formatting retains meaningful list numbers', 30000);
+  const cleanedSpeech = await page.evaluate(() => window.__echolinkVerify.audio.map((item) => item.text).join(' '));
+  check(cleanedSpeech.includes('This is a short offline Kokoro verification sentence.') && cleanedSpeech.includes('Item 12') && !/[#*`]/.test(cleanedSpeech) && !/\s-\s/.test(cleanedSpeech), 'Formatted source synthesizes readable speech without Markdown markers', cleanedSpeech);
+  check(await page.locator('#editorPlayBtn').innerText() === 'Pause', 'Quick Play mirrors the active playback state', 'editor action changes to Pause while audio is playing');
   const firstSource = await page.evaluate(() => window.__echolinkVerify.sourceStarts[0]);
   check(firstSource.duration > 0 && firstSource.sampleRate === 24000 && firstSource.channels === 1, 'Audio enters Web Audio playback', `${firstSource.duration.toFixed(2)}s mono at ${firstSource.sampleRate}Hz`);
   check(!(await page.locator('#downloadBtn').isDisabled()), 'Download enables after full synthesis', 'complete Heart audio is ready for export');
@@ -469,6 +496,51 @@ async function verify() {
   const responsiveFit = responsiveLayouts.every((layout) => layout.documentWidth <= layout.width && layout.bodyWidth <= layout.width && layout.editorBottom <= layout.playerTop + 1 && layout.promptBottom <= layout.editorFooterTop && layout.playTop >= layout.scrubBottom && layout.playerChildrenFit && layout.playerOverflow.length === 0);
   check(responsiveFit, 'Responsive layouts fit above the persistent player', JSON.stringify(responsiveLayouts));
   await captureState(page, '06-mobile-empty');
+
+  const mobileContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
+  });
+  const mobileExternal = new Set();
+  const mobileResponses = [];
+  await mobileContext.route('**/*', (route) => {
+    const url = new URL(route.request().url());
+    if (url.origin === origin) return route.continue();
+    mobileExternal.add(url.href);
+    return route.abort('internetdisconnected');
+  });
+  await mobileContext.addInitScript(() => {
+    window.__echolinkVerify = { messages: [], audio: [] };
+    const original = Worker.prototype.addEventListener;
+    Worker.prototype.addEventListener = function(type, listener, options) {
+      if (type !== 'message') return original.call(this, type, listener, options);
+      return original.call(this, type, (event) => {
+        const data = event.data || {};
+        window.__echolinkVerify.messages.push({ type: data.type, status: data.status, message: data.message, engineId: data.engineId, engineMode: data.engineMode, backend: data.backend, dtype: data.dtype });
+        if (data.type === 'audio' && data.samples instanceof Float32Array) {
+          const samples = data.samples;
+          window.__echolinkVerify.audio.push({ voice: data.voice, text: data.text, sampleCount: samples.length, finite: [...samples].filter(Number.isFinite).length, nonzero: [...samples].filter((sample) => sample !== 0).length });
+        }
+        listener.call(this, event);
+      }, options);
+    };
+  });
+  const mobilePage = await mobileContext.newPage();
+  mobilePage.on('response', (item) => mobileResponses.push({ url: item.url(), status: item.status() }));
+  await mobilePage.goto(`${origin}/`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await waitFor(mobilePage, () => window.__echolinkVerify?.messages.some((m) => m.type === 'status' && m.status === 'ready'), 'Mobile compact Kokoro initializes offline');
+  const mobileReady = await mobilePage.evaluate(() => window.__echolinkVerify.messages.filter((m) => m.type === 'status' && m.status === 'ready').at(-1));
+  check(mobileReady?.engineId === 'wasm-q8', 'iPhone-class devices select the compact local model', JSON.stringify({ engineId: mobileReady?.engineId, mode: mobileReady?.engineMode, dtype: mobileReady?.dtype }));
+  check(mobileResponses.some((item) => new URL(item.url).pathname.endsWith('/onnx/model_quantized.onnx') && item.status === 200), 'Compact model asset loads from local server', 'Q8 ONNX asset was served over loopback');
+  await mobilePage.locator('#textInput').fill('Testing hello, are you there?');
+  await mobilePage.locator('#editorPlayBtn').click();
+  await waitFor(mobilePage, () => window.__echolinkVerify?.audio.some((item) => item.voice === 'af_heart'), 'Compact mobile mode synthesizes Heart speech offline', 300000);
+  const mobileAudio = await mobilePage.evaluate(() => window.__echolinkVerify.audio.at(-1));
+  check(mobileAudio.sampleCount > 1000 && mobileAudio.finite === mobileAudio.sampleCount && mobileAudio.nonzero > 0, 'Compact mobile audio is valid and non-empty', `${mobileAudio.sampleCount} samples, ${mobileAudio.nonzero} non-zero`);
+  check(mobileExternal.size === 0, 'Compact mobile synthesis has no internet dependency', 'all external requests were blocked');
+  await mobileContext.close();
 
   check(pageErrors.length === 0, 'No uncaught JavaScript errors', pageErrors.length ? pageErrors.join(' | ') : 'none observed');
   check(consoleErrors.length === 0, 'No browser console errors', consoleErrors.length ? consoleErrors.join(' | ') : 'none observed');

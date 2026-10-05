@@ -4,7 +4,7 @@ EchoLink is a standalone text-to-speech reader. The browser interface and model 
 
 ## First-time setup
 
-The finished app is already built. The FP32 Kokoro model (about 311 MiB), selected Kokoro voice embeddings, and browser runtime are included in this folder, so you can launch it as-is. Heart (`af_heart`) is the default voice. The selector includes `af_heart`, `af_jessica`, `af_nicole`, `af_sky`, `am_adam`, `am_onyx`, `am_santa`, `bf_alice`, `bf_emma`, `bm_daniel`, and `bm_lewis`. To rebuild from source, run `setup.bat` while online; it installs the pinned build dependencies and recreates `dist/` from the bundled model and voice files.
+The finished app is already built. The FP32 Kokoro model (about 311 MiB), compact Q8 model (about 88 MiB), selected Kokoro voice embeddings, and browser runtime are included in this folder, so you can launch it as-is. Heart (`af_heart`) is the default voice. The selector includes `af_heart`, `af_jessica`, `af_nicole`, `af_sky`, `am_adam`, `am_onyx`, `am_santa`, `bf_alice`, `bf_emma`, `bm_daniel`, and `bm_lewis`. To rebuild from source, run `setup.bat` while online; it installs the pinned build dependencies and recreates `dist/` from the bundled model and voice files.
 
 Node.js 20.19+ or 22.12+ is required. The ONNX model is stored with Git LFS; install Git LFS before cloning so the model is downloaded as a real model file rather than an LFS pointer. If you already cloned without it, run `git lfs install` and `git lfs pull` in the repository.
 
@@ -12,18 +12,18 @@ Node.js 20.19+ or 22.12+ is required. The ONNX model is stored with Git LFS; ins
 
 Run **EchoLink.cmd** to open the server control menu. Choose **Start local only** to bind to this computer, or **Start shared** to make it reachable from this computer and other devices on the same local network. Shared mode prints the LAN URL and requests a Windows Firewall rule for this port restricted to `LocalSubnet`; Windows may show an administrator prompt. It does not expose EchoLink to the public internet. **Stop** releases the port; **Quit** stops the server, verifies the port is free, then exits. The app uses the single port in `server.port` (4174 by default) and local mode is served at `http://127.0.0.1:4174`. If another process owns that port, the launcher reports the conflict and leaves it alone. `Hush.cmd` remains as a compatibility shortcut and opens the EchoLink menu.
 
-Choose **Verify app** in the menu or run `npm run verify` to rebuild and run the repeatable offline smoke test. It checks bundled assets, local/shared server start/stop/restart and LAN-address responses, browser runtime errors, local-only model/runtime/artwork loads, default Heart (`af_heart`) and alternate Jessica synthesis, WAV export validity, local history/settings/help, progressive generation, playback controls, editable text during playback, safe draft edits, and the empty/cleared reader state. It also checks layout fit at 1440px, 1024px, 820px, and 390px. It uses installed Microsoft Edge or Chrome with WebGPU and blocks every browser request outside the local server, so Kokoro initializes and synthesizes with internet access denied. Each run saves empty, idle, playing, paused, cleared, and mobile-empty UI screenshots under `output/playwright/verification/`. A person should still listen to samples and visually inspect the reader in their target browser/GPU setup.
+Choose **Verify app** in the menu or run `npm run verify` to rebuild and run the repeatable offline smoke test. It checks bundled assets, local/shared server start/stop/restart and LAN-address responses, browser runtime errors, local-only model/runtime/artwork loads, Heart (`af_heart`) and alternate Jessica synthesis, WAV export validity, local history/settings/help, progressive generation, playback controls, editable text during playback, formatting cleanup, and the empty/cleared reader state. It tests desktop layout plus a simulated iPhone browser path and synthesizes through the compact local Q8 model with external requests blocked. Each run saves UI screenshots under `output/playwright/verification/`. It uses installed Microsoft Edge or Chrome; simulated iPhone coverage is not a substitute for testing actual Safari/iOS. A person should still listen to samples and visually inspect the reader in their target browser/GPU setup.
 
-WebGPU is the required primary backend. Use a current Chrome or Edge build with hardware acceleration enabled. EchoLink does not switch to browser speech synthesis or a different voice if WebGPU is unavailable.
+Desktop uses local FP32 Kokoro on WebGPU first, then falls back to local FP32 WASM and finally local Q8 WASM if a mode fails its audio self-test. iPhone/iPad and LAN HTTP sessions use compact Q8 WASM first to avoid full-model memory pressure and the insecure-context WebGPU limitation. The ready panel reports the selected quality/backend and offers the next local mode when available. There is no cloud or browser-native speech fallback. Model readiness and a short Heart voice check gate both Play buttons.
 
 ## Implementation
 
 - `src/tts.js` is the reusable timeline and playback session API.
-- `src/tts-worker.js` owns model loading and serial, progressive generation in a persistent Web Worker.
-- Kokoro.js is pinned to 1.2.1; model `onnx-community/Kokoro-82M-v1.0-ONNX`; `fp32` + `webgpu`; selectable local voices; 24 kHz output.
+- `src/tts-worker.js` owns model loading, the device-aware local engine fallback, a short audio self-test, and serial progressive generation in a persistent Web Worker.
+- Kokoro.js is pinned to 1.2.1; model `onnx-community/Kokoro-82M-v1.0-ONNX`; desktop prefers `fp32` + `webgpu`, while constrained/mobile paths use `q8` + `wasm`; selectable local voices; 24 kHz output.
 - Remote model downloads are disabled in Transformers.js. The Kokoro voice loader is patched at build time to resolve `/tts/voices/<voice-id>.bin` locally.
 - The production local server applies a Content Security Policy with `connect-src 'self'`, so a remote request cannot silently become a runtime dependency.
-- Text and preferences are stored in the browser's local storage.
+- The current editor draft is session-only and clears on refresh. Reading history and preferences remain in browser local storage. Markdown cleanup for speech is on by default and keeps source offsets for spoken-text highlighting.
 
 ## Visual assets
 

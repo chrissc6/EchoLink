@@ -1,8 +1,8 @@
-import { KokoroReaderSession } from './tts.js';
+import { KokoroReaderSession, cleanEchoLinkText } from './tts.js';
 import './style.css';
 
 const $ = (id) => document.getElementById(id);
-const ui = Object.fromEntries(['textInput','placeholder','textView','textCount','pasteBtn','clearBtn','editorCard','transportPlayBtn','restartBtn','stopBtn','previousBtn','nextBtn','backBtn','forwardBtn','rateSelect','volumeSlider','muteBtn','scrubber','scrubProgress','elapsedTime','totalTime','statusText','statusLed','generationText','chunkCount','generationProgress','bufferStatus','deviceStatus','engineVoice','trackTitle','trackSubtitle','trackWave','toast','helpBtn','historyBtn','settingsBtn','appDialog','dialogTitle','dialogContent','downloadBtn','sideVoice','voiceSelect','voiceAvatar','voiceMeta'].map((id) => [id, $(id)]));
+const ui = Object.fromEntries(['textInput','placeholder','textView','textCount','pasteBtn','clearBtn','editorPlayBtn','openFileBtn','fileInput','copyBtn','cleanFormatting','fallbackBtn','engineMode','engineSubtitle','editorCard','transportPlayBtn','restartBtn','stopBtn','previousBtn','nextBtn','backBtn','forwardBtn','rateSelect','volumeSlider','muteBtn','scrubber','scrubProgress','elapsedTime','totalTime','statusText','statusLed','generationText','chunkCount','generationProgress','bufferStatus','deviceStatus','engineVoice','trackTitle','trackSubtitle','trackWave','toast','helpBtn','historyBtn','settingsBtn','appDialog','dialogTitle','dialogContent','downloadBtn','sideVoice','voiceSelect','voiceAvatar','voiceMeta'].map((id) => [id, $(id)]));
 const rates = [0.75,0.9,1,1.1,1.25,1.5,1.75,2];
 const voices = [
   { id: 'af_heart', name: 'Heart', accent: 'AMERICAN · WARM' },
@@ -18,9 +18,8 @@ const voices = [
   { id: 'bm_lewis', name: 'Lewis', accent: 'BRITISH · MALE' },
 ];
 const preferencesKey = 'echolink-preferences';
-const textKey = 'echolink-last-text';
 const historyKey = 'echolink-history';
-let toastTimer, preparedText = '', viewSpans = [], scrubbing = false, lastStatus = 'ready', lastHighlight = -1;
+let toastTimer, preparedText = '', viewSpans = [], scrubbing = false, lastStatus = 'loading', lastHighlight = -1, modelReady = false;
 function readLocal(key) { try { return localStorage.getItem(key); } catch { return null; } }
 function writeLocal(key, value) { try { localStorage.setItem(key, value); } catch { /* Speech stays available when browser storage is restricted. */ } }
 let saved = {};
@@ -43,7 +42,8 @@ session.voice = savedVoice.id;
 ui.voiceSelect.value = savedVoice.id;
 renderVoice();
 
-ui.textInput.value = readLocal(textKey) || readLocal('hush-last-text') || '';
+ui.textInput.value = '';
+ui.cleanFormatting.checked = saved.cleanFormatting !== false;
 session.rate = rates.includes(Number(saved.rate)) ? Number(saved.rate) : 1;
 session.volume = saved.volume == null ? 0.82 : Math.max(0, Math.min(1, Number(saved.volume)));
 ui.rateSelect.value = String(session.rate);
@@ -210,8 +210,9 @@ function renderText() {
   ui.textCount.innerHTML = `${words.toLocaleString()} ${words === 1 ? 'word' : 'words'} <span>·</span> ${text.length.toLocaleString()} characters`;
   ui.placeholder.hidden = !!text.trim();
   ui.clearBtn.disabled = !text;
+  ui.copyBtn.disabled = !text;
+  ui.editorPlayBtn.disabled = !text.trim() || !modelReady;
   ui.textInput.classList.toggle('has-text', !!text.trim());
-  writeLocal(textKey, text);
   if (text !== preparedText) {
     ui.editorCard.dataset.mode = 'edit';
     ui.textView.hidden = true; ui.textView.replaceChildren(); viewSpans = []; lastHighlight = -1;
@@ -224,6 +225,24 @@ ui.pasteBtn.addEventListener('click', async () => {
   try { ui.textInput.value = await navigator.clipboard.readText(); ui.textInput.focus(); renderText(); }
   catch { ui.textInput.focus(); notify('Clipboard access is unavailable. Use Ctrl+V to paste.'); }
 });
+ui.openFileBtn.addEventListener('click', () => ui.fileInput.click());
+ui.fileInput.addEventListener('change', async () => {
+  const file = ui.fileInput.files?.[0];
+  if (!file) return;
+  ui.textInput.value = await file.text();
+  renderText();
+  ui.fileInput.value = '';
+  notify(`Opened ${file.name}`);
+});
+ui.copyBtn.addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(ui.textInput.value); notify('Text copied.'); }
+  catch { ui.textInput.focus(); ui.textInput.select(); notify('Clipboard access is unavailable. Text selected; copy with Ctrl+C.'); }
+});
+ui.cleanFormatting.addEventListener('change', () => {
+  savePreferences();
+  if (session.chunks.length) { session.stop(); preparedText = ''; ui.textView.hidden = true; renderText(); }
+});
+ui.fallbackBtn.addEventListener('click', () => worker.postMessage({ type: 'fallback-now', reason: 'You selected another local quality mode.' }));
 ui.clearBtn.addEventListener('click', () => {
   ui.textInput.value = ''; preparedText = ''; viewSpans = []; lastHighlight = -1;
   ui.editorCard.dataset.mode = 'edit';
@@ -262,7 +281,7 @@ ui.settingsBtn.addEventListener('click', () => {
   $('settingsRate').addEventListener('change', (event) => { ui.rateSelect.value = event.target.value; ui.rateSelect.dispatchEvent(new Event('change')); });
   $('settingsVolume').addEventListener('input', (event) => { ui.volumeSlider.value = event.target.value; ui.volumeSlider.dispatchEvent(new Event('input')); });
 });
-ui.helpBtn.addEventListener('click', () => openPanel('Help', '<div class="dialog-copy"><p>Paste or type text, choose a voice, then press Play. Kokoro generates speech locally on this device.</p><p><kbd>Space</kbd> Play or pause<br><kbd>←</kbd> / <kbd>→</kbd> Skip 15 seconds<br><kbd>Shift</kbd> + arrow Previous or next sentence</p><p>Model, voices, and runtime are served from EchoLink’s local files. Your text and history stay in this browser.</p></div>'));
+ui.helpBtn.addEventListener('click', () => openPanel('Help', '<div class="dialog-copy"><p>Paste or type text, choose a voice, then press Play. Kokoro generates speech locally on this device.</p><p><kbd>Space</kbd> Play or pause<br><kbd>←</kbd> / <kbd>→</kbd> Skip 15 seconds<br><kbd>Shift</kbd> + arrow Previous or next sentence</p><p>Model, voices, and runtime are served from EchoLink’s local files. Draft text clears on refresh; history and preferences stay in this browser.</p></div>'));
 function escapeHtml(value) { return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]); }
 ui.downloadBtn.addEventListener('click', () => {
   if (!session.chunks.length || session.generated !== session.chunks.length || session.chunks.some((chunk) => !chunk.buffer)) { notify('Wait until speech generation is complete to download the full audio.'); return; }
@@ -279,7 +298,7 @@ function downloadWav(chunks, text) {
   const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }));
   const anchor = document.createElement('a'); anchor.href = url; anchor.download = `${safeFilename(text)}-${session.voice}.wav`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-function safeFilename(text) { return (text.trim().split(/\s+/).slice(0, 6).join('-').replace(/[^\p{L}\p{N}-]/gu, '').replace(/-+/g, '-').slice(0, 48) || 'echolink-reading').toLowerCase(); }
+function safeFilename(text) { return (cleanEchoLinkText(text).trim().split(/\s+/).slice(0, 6).join('-').replace(/[^\p{L}\p{N}-]/gu, '').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || 'echolink-reading').toLowerCase(); }
 
 function showReadView(text, chunks) {
   ui.textView.replaceChildren(); viewSpans = [];
@@ -296,9 +315,10 @@ function showReadView(text, chunks) {
 }
 
 async function startOrResume() {
+  if (!modelReady) { notify('Kokoro is still getting ready. Play enables after the local voice check passes.'); return; }
   if (ui.textInput.value.trim() && (!session.chunks.length || ui.textInput.value !== preparedText)) {
     preparedText = ui.textInput.value;
-    session.prepare(preparedText);
+    session.prepare(preparedText, { cleanFormatting: ui.cleanFormatting.checked });
     rememberReading(preparedText);
   }
   if (!session.chunks.length) { ui.textInput.focus(); notify('Paste or type something to read first.'); return; }
@@ -306,6 +326,7 @@ async function startOrResume() {
   try { await session.play(); }
   catch (error) { notify(`Audio playback could not start: ${error?.message || error}`); }
 }
+ui.editorPlayBtn.addEventListener('click', () => session.playing ? session.pause() : startOrResume());
 ui.transportPlayBtn.addEventListener('click', () => session.playing ? session.pause() : startOrResume());
 ui.backBtn.addEventListener('click', () => session.skip(-15));
 ui.forwardBtn.addEventListener('click', () => session.skip(15));
@@ -333,7 +354,7 @@ ui.muteBtn.addEventListener('click', () => {
   session.setVolume(muted ? 0 : lastVolume);
   ui.volumeSlider.value = Math.round(session.volume * 100); savePreferences();
 });
-function savePreferences() { writeLocal(preferencesKey, JSON.stringify({ rate: session.rate, volume: session.volume, lastVolume, voice: session.voice })); }
+function savePreferences() { writeLocal(preferencesKey, JSON.stringify({ rate: session.rate, volume: session.volume, lastVolume, voice: session.voice, cleanFormatting: ui.cleanFormatting.checked })); }
 function renderTrack() {
   const text = preparedText || ui.textInput.value;
   if (!text.trim()) {
@@ -371,7 +392,7 @@ document.addEventListener('keydown', (event) => {
 });
 
 function update(state = {}) {
-  if (state.status === 'error') { lastStatus = 'error'; ui.statusText.textContent = state.message || 'Something went wrong'; ui.statusLed.className = 'status-led error'; notify(state.message || 'Speech generation failed.'); }
+  if (state.status === 'error') { lastStatus = 'error'; if (!state.sessionId) modelReady = false; ui.statusText.textContent = state.message || 'Something went wrong'; ui.statusLed.className = 'status-led error'; notify(state.message || 'Speech generation failed.'); }
   else if (state.status === 'loading') {
     lastStatus = state.status; ui.statusText.textContent = state.message || (state.status === 'loading' ? 'Loading Kokoro' : 'Generating speech'); ui.statusLed.className = `status-led ${state.status}`;
   } else if (session.paused && state.total) {
@@ -383,10 +404,17 @@ function update(state = {}) {
   else if (state.playing) { ui.statusText.textContent = 'Playing'; ui.statusLed.className = 'status-led playing'; }
   else if (state.generated && state.generated === state.total && state.total && !state.playing) { ui.statusText.textContent = 'Ready to listen'; ui.statusLed.className = 'status-led'; }
   else if (lastStatus !== 'loading' && lastStatus !== 'generating') { ui.statusText.textContent = 'Ready when you are'; ui.statusLed.className = 'status-led'; }
-  if (state.status === 'ready') { lastStatus = 'ready'; ui.statusText.textContent = session.paused ? (session.chunks.length ? 'Paused' : 'Ready to listen') : (session.playing ? 'Playing' : 'Ready to listen'); ui.statusLed.className = session.playing ? 'status-led playing' : 'status-led'; }
-  if (state.message?.includes('WebGPU is unavailable')) ui.deviceStatus.textContent = 'UNAVAILABLE';
-  else if (state.status === 'loading' || state.status === 'ready') ui.deviceStatus.textContent = 'WebGPU acceleration';
-  ui.generationText.textContent = state.total && state.generated === state.total ? 'AUDIO READY' : (state.generated ? 'GENERATING SPEECH' : (state.status === 'loading' ? 'LOADING MODEL · FP32' : 'KOKORO · FP32'));
+  if (state.status === 'ready') { lastStatus = 'ready'; modelReady = true; ui.statusText.textContent = session.paused ? (session.chunks.length ? 'Paused' : 'Ready to listen') : (session.playing ? 'Playing' : 'Ready to listen'); ui.statusLed.className = session.playing ? 'status-led playing' : 'status-led'; }
+  if (state.status === 'loading' || state.status === 'self-testing' || state.status === 'fallback') modelReady = false;
+  ui.editorPlayBtn.disabled = !ui.textInput.value.trim() || !modelReady;
+  ui.transportPlayBtn.disabled = !modelReady && !session.chunks.length;
+  ui.engineSubtitle.textContent = state.engineName ? `${state.engineName} · ${state.backend || 'local'}${state.dtype ? ` · ${state.dtype.toUpperCase()}` : ''}` : (modelReady ? 'Local Kokoro ready' : 'Checking local speech modes…');
+  ui.engineMode.textContent = state.engineMode ? `${state.engineMode} · ${state.backend || 'local'} ${state.dtype || ''}` : (modelReady ? 'Local voice self-test passed' : 'Local model · preparing');
+  const order = state.engineOrder || [];
+  const currentIndex = order.indexOf(state.engineId);
+  ui.fallbackBtn.hidden = !modelReady || currentIndex < 0 || currentIndex >= order.length - 1;
+  ui.deviceStatus.textContent = state.backend === 'wasm' ? 'Local CPU acceleration' : state.status === 'ready' ? 'WebGPU acceleration' : 'Checking device capabilities';
+  ui.generationText.textContent = state.total && state.generated === state.total ? 'AUDIO READY' : (state.generated ? 'GENERATING SPEECH' : (state.status === 'loading' || state.status === 'self-testing' ? `LOADING MODEL · ${state.dtype?.toUpperCase() || 'LOCAL'}` : `KOKORO · ${state.dtype?.toUpperCase() || 'LOCAL'}`));
   ui.chunkCount.textContent = `${state.generated || 0} / ${state.total || 0}`;
   ui.generationProgress.style.width = `${state.total ? 100 * state.generated / state.total : (state.status === 'loading' ? '14' : '0')}%`;
   const buffered = Math.max(0, (state.chunks || []).reduce((sum, chunk) => sum + (chunk.buffer ? chunk.duration : 0), 0));
@@ -404,6 +432,8 @@ function update(state = {}) {
   ui.muteBtn.classList.toggle('muted', session.volume === 0);
   ui.transportPlayBtn.classList.toggle('is-playing', state.playing);
   ui.transportPlayBtn.setAttribute('aria-label', state.playing ? 'Pause' : 'Play');
+  ui.editorPlayBtn.textContent = state.playing ? 'Pause' : 'Play';
+  ui.editorPlayBtn.disabled = !ui.textInput.value.trim() || !modelReady;
   ui.transportPlayBtn.firstElementChild.innerHTML = state.playing
     ? '<svg viewBox="0 0 24 24"><path d="M7 5h4v14H7zM15 5h4v14h-4z"/></svg>'
     : '<svg viewBox="0 0 24 24"><path d="m8 5 12 7-12 7V5Z"/></svg>';
